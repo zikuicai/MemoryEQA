@@ -11,7 +11,7 @@ save_freq: 10
 # Question answering
 vlm:
   hf_token: [your hf token]
-  device: 'cuda:0'
+  device: cuda
   model_id: prism-dinosiglip+7b
 
 # Camera, image

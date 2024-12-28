@@ -2,16 +2,16 @@
 seed: 42
 exp_name: vlm_exp_sim
 output_parent_dir: results
-question_data_path: data/HM-EQA/questions.csv
-init_pose_data_path: data/scene_init_poses.csv
-scene_data_path: /data/zml/datasets/EmbodiedQA/HM3D
+question_data_path: ./data/HM-EQA/questions.csv
+init_pose_data_path: ./data/scene_init_poses.csv
+scene_data_path: ./data/HM3D
 save_obs: true
 save_freq: 10
 
 # Question answering
 vlm:
-  hf_token: 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
-  device: 'cuda:3'
+  hf_token: [your hf token]
+  device: cuda
   model_id: prism-dinosiglip+7b
 
 # Camera, image
