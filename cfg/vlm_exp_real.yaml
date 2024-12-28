@@ -10,7 +10,7 @@ save_freq: 10
 
 # Question answering
 vlm:
-  hf_token: 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
+  hf_token: hf-token
   device: 'cuda:3'
   model_id: prism-dinosiglip+7b
 
