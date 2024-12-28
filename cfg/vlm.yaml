@@ -1,0 +1,3 @@
+hf_token: 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
+device: 'cuda:3'
+model_id: prism-dinosiglip+7b
