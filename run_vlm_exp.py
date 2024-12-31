@@ -238,7 +238,7 @@ def main(cfg):
                             depth = obs["depth_sensor"]
 
                             if cfg.save_obs:
-                                display_sample(rgb, depth, "results/test_scene/sample.png")
+                                display_sample(rgb, depth, os.path.join(episode_data_dir, "sample.png"))
 
                             # TSDF fusion
                             tsdf_planner.integrate(
@@ -250,7 +250,7 @@ def main(cfg):
                                 margin_h=int(cfg.margin_h_ratio * img_height),
                                 margin_w=int(cfg.margin_w_ratio * img_width),
                             )
-                            tsdf_planner.get_mesh(f"results/test_scene/scene_{cnt_data}.ply")
+                            tsdf_planner.get_mesh(f"results/scenes/scene_{cnt_data}.ply")
 
                             if cfg.use_active:
                                 prompt_points_pix, fig = (
@@ -447,9 +447,10 @@ def main(cfg):
 
             # Determine next point
             if cnt_step < num_step:
-                pts_normal, angle, pts_pix, fig = tsdf_planner.find_next_pose(
+                pts_normal, angle, cur_angle, pts_pix, fig = tsdf_planner.find_next_pose(
                     pts=pts_normal,
                     angle=angle,
+                    cam_pose=cam_pose_tsdf,
                     flag_no_val_weight=cnt_step < cfg.min_random_init_steps,
                     **cfg.planner,
                 )
