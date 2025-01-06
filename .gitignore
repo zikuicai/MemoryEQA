@@ -3,3 +3,6 @@ data/
 nohup.out
 *.pyc
 results/
+__pychache__/
+*.egg-info/
+vlm/
