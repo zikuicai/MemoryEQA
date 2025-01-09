@@ -35,10 +35,11 @@ def get_response():
     file = request.files['image']
     img = Image.open(file).convert("RGB")
     text = request.form['text']
+    kb = json.loads(request.form['kb'])
 
-    result = vlm.get_response(img, text)
+    result = vlm.get_response(img, text, kb)
     return jsonify({"result": result}), 200
 
 
 if __name__ == '__main__':
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    app.run(debug=True, host="0.0.0.0", port=5000, threaded=True)

@@ -86,6 +86,16 @@ def main(cfg):
             }
     logging.info(f"Loaded {len(questions_data)} questions.")
 
+    # Load VLM
+    vlm = VLM(cfg.vlm)
+
+    results_all = []
+    # part_data = len(questions_data) / gpu_count
+    # start_idx = int(part_data * gpu_index)
+    # end_idx = int(part_data * (gpu_index + 1))
+
+    # logging.info(f"Loaded {start_idx} - {end_idx} questions.")
+
     # Run all questions
     cnt_data = 0
     results_all = []
@@ -177,103 +187,103 @@ def main(cfg):
             step_name = f"step_{cnt_step}"
             logging.info(f"Current pts: {pts}")
             # 第二步开始将位置转换为action
-            if cnt_step > 0:
-                goal_position = pts
-                if pathfinder.is_navigable(goal_position):
-                    path = habitat_sim.ShortestPath()
-                    path.requested_start = agent.get_state().position
-                    path.requested_end = goal_position
+            # if cnt_step > 0:
+            #     goal_position = pts
+            #     if pathfinder.is_navigable(goal_position):
+            #         path = habitat_sim.ShortestPath()
+            #         path.requested_start = agent.get_state().position
+            #         path.requested_end = goal_position
 
-                    # 如果路径找到，使用GreedyFollower生成动作序列
-                    follower = habitat_sim.GreedyGeodesicFollower(
-                        pathfinder, agent, goal_radius=0.1
-                    )
+            #         # 如果路径找到，使用GreedyFollower生成动作序列
+            #         follower = habitat_sim.GreedyGeodesicFollower(
+            #             pathfinder, agent, goal_radius=0.1
+            #         )
 
-                    # 按路径生成动作
-                    actions = []
-                    idx = -1
-                    max_actions = 100
-                    while True:
-                        try:
-                            idx += 1
-                            action = follower.next_action_along(goal_position)
-                            print(len(actions), action, agent.get_state().position, "--->", goal_position)
+            #         # 按路径生成动作
+            #         actions = []
+            #         idx = -1
+            #         max_actions = 100
+            #         while True:
+            #             try:
+            #                 idx += 1
+            #                 action = follower.next_action_along(goal_position)
+            #                 print(len(actions), action, agent.get_state().position, "--->", goal_position)
 
-                            if action is None:
-                                break
+            #                 if action is None:
+            #                     break
 
-                            actions.append(action)
-                            if len(actions) > max_actions:
-                                break
+            #                 actions.append(action)
+            #                 if len(actions) > max_actions:
+            #                     break
 
-                            # 模拟执行动作
-                            if action == "move_forward":
-                                observations = simulator.step("move_forward")
-                            elif action == "turn_left":
-                                observations = simulator.step("turn_left")
-                            elif action == "turn_right":
-                                observations = simulator.step("turn_right")
+            #                 # 模拟执行动作
+            #                 if action == "move_forward":
+            #                     observations = simulator.step("move_forward")
+            #                 elif action == "turn_left":
+            #                     observations = simulator.step("turn_left")
+            #                 elif action == "turn_right":
+            #                     observations = simulator.step("turn_right")
 
-                            if cfg.save_obs:
-                                rgb = observations["color_sensor"]
-                                depth = observations["depth_sensor"]
-                                display_sample(rgb, depth, os.path.join(episode_data_dir, "sample.png"))
+            #                 if cfg.save_obs:
+            #                     rgb = observations["color_sensor"]
+            #                     depth = observations["depth_sensor"]
+            #                     display_sample(rgb, depth, os.path.join(episode_data_dir, "sample.png"))
 
-                            pts_normal = pos_habitat_to_normal(agent.get_state().position)
+            #                 pts_normal = pos_habitat_to_normal(agent.get_state().position)
 
-                            # Update camera info
-                            sensor = agent.get_state().sensor_states["depth_sensor"]
-                            quaternion_0 = sensor.rotation
-                            translation_0 = sensor.position
+            #                 # Update camera info
+            #                 sensor = agent.get_state().sensor_states["depth_sensor"]
+            #                 quaternion_0 = sensor.rotation
+            #                 translation_0 = sensor.position
 
-                            cam_pose = np.eye(4)
-                            cam_pose[:3, :3] = quaternion.as_rotation_matrix(quaternion_0)
-                            cam_pose[:3, 3] = translation_0
-                            cam_pose_normal = pose_habitat_to_normal(cam_pose)
-                            cam_pose_tsdf = pose_normal_to_tsdf(cam_pose_normal)
+            #                 cam_pose = np.eye(4)
+            #                 cam_pose[:3, :3] = quaternion.as_rotation_matrix(quaternion_0)
+            #                 cam_pose[:3, 3] = translation_0
+            #                 cam_pose_normal = pose_habitat_to_normal(cam_pose)
+            #                 cam_pose_tsdf = pose_normal_to_tsdf(cam_pose_normal)
 
-                            # Get observation at current pose - skip black image, meaning robot is outside the floor
-                            obs = simulator.get_sensor_observations()
-                            rgb = obs["color_sensor"]
-                            depth = obs["depth_sensor"]
+            #                 # Get observation at current pose - skip black image, meaning robot is outside the floor
+            #                 obs = simulator.get_sensor_observations()
+            #                 rgb = obs["color_sensor"]
+            #                 depth = obs["depth_sensor"]
 
-                            if cfg.save_obs:
-                                display_sample(rgb, depth, os.path.join(episode_data_dir, "sample.png"))
+            #                 if cfg.save_obs:
+            #                     display_sample(rgb, depth, os.path.join(episode_data_dir, "sample.png"))
 
-                            # TSDF fusion
-                            tsdf_planner.integrate(
-                                color_im=rgb,
-                                depth_im=depth,
-                                cam_intr=cam_intr,
-                                cam_pose=cam_pose_tsdf,
-                                obs_weight=1.0,
-                                margin_h=int(cfg.margin_h_ratio * img_height),
-                                margin_w=int(cfg.margin_w_ratio * img_width),
-                            )
-                            tsdf_planner.get_mesh(f"results/scenes/scene_{cnt_data}.ply")
+            #                 # TSDF fusion
+            #                 tsdf_planner.integrate(
+            #                     color_im=rgb,
+            #                     depth_im=depth,
+            #                     cam_intr=cam_intr,
+            #                     cam_pose=cam_pose_tsdf,
+            #                     obs_weight=1.0,
+            #                     margin_h=int(cfg.margin_h_ratio * img_height),
+            #                     margin_w=int(cfg.margin_w_ratio * img_width),
+            #                 )
+            #                 tsdf_planner.get_mesh(f"results/scenes/scene_{cnt_data}.ply")
 
-                            if cfg.use_active:
-                                prompt_points_pix, fig = (
-                                    tsdf_planner.find_prompt_points_within_view(
-                                        pts_normal,
-                                        img_width,
-                                        img_height,
-                                        cam_intr,
-                                        cam_pose_tsdf,
-                                        **cfg.visual_prompt,
-                                    )
-                                )
-                                fig.tight_layout()
-                                plt.savefig(os.path.join(episode_data_dir, "prompt_points.png".format(cnt_step)))
-                                plt.close()
+            #                 if cfg.use_active:
+            #                     prompt_points_pix, fig = (
+            #                         tsdf_planner.find_prompt_points_within_view(
+            #                             pts_normal,
+            #                             img_width,
+            #                             img_height,
+            #                             cam_intr,
+            #                             cam_pose_tsdf,
+            #                             **cfg.visual_prompt,
+            #                         )
+            #                     )
+            #                     fig.tight_layout()
+            #                     plt.savefig(os.path.join(episode_data_dir, "prompt_points.png".format(cnt_step)))
+            #                     plt.close()
 
-                        except habitat_sim.errors.GreedyFollowerError as e:
-                            print("GreedyFollowerError encountered:", e)
-                            break
+            #             except habitat_sim.errors.GreedyFollowerError as e:
+            #                 print("GreedyFollowerError encountered:", e)
+            #                 break
 
-                    print("Actions to reach goal:", actions)
-                else:
-                    print("目标位置不可达")
+            #         print("Actions to reach goal:", actions)
+            #     else:
+            #         print("目标位置不可达")
 
             agent_state.position = pts
             agent_state.rotation = rotation
@@ -337,14 +347,15 @@ def main(cfg):
                 )
                 
                 # logging.info(f"Prompt Pred: {prompt_question}")
-                smx_vlm_pred = get_vlm_loss(rgb_im, prompt_question, vlm_pred_candidates)
+                # smx_vlm_pred = get_vlm_loss(rgb_im, prompt_question, vlm_pred_candidates)
+                smx_vlm_pred = vlm.get_loss(rgb_im, prompt_question, vlm_pred_candidates)
                 logging.info(f"Pred - Prob: {smx_vlm_pred}")
 
                 # Get VLM relevancy
                 prompt_rel = f"\nConsider the question: '{question}'. Are you confident about answering the question with the current view? Answer with Yes or No."
-                smx_vlm_rel = get_vlm_loss(rgb_im, prompt_rel, ["Yes", "No"])
+                # smx_vlm_rel = get_vlm_loss(rgb_im, prompt_rel, ["Yes", "No"])
+                smx_vlm_rel = vlm.get_loss(rgb_im, prompt_rel, ["Yes", "No"])
 
-                logging.info(f"Rel - Prob: {smx_vlm_rel}")
                 logging.info(f"Rel - Prob: {smx_vlm_rel}")
 
                 # Get frontier candidates
@@ -410,7 +421,8 @@ def main(cfg):
                     # get VLM reasoning for exploring
                     if cfg.use_lsv:
                         prompt_lsv = f"\nConsider the question: '{question}', and you will explore the environment for answering it.\nWhich direction (black letters on the image) would you explore then? Answer with a single letter."
-                        lsv = get_vlm_loss(rgb_im_draw, prompt_lsv, draw_letters[:actual_num_prompt_points])
+                        # lsv = get_vlm_loss(rgb_im_draw, prompt_lsv, draw_letters[:actual_num_prompt_points])
+                        lsv = vlm.get_loss(rgb_im_draw, prompt_lsv, draw_letters[:actual_num_prompt_points])
                         lsv *= actual_num_prompt_points / 3
                     else:
                         lsv = (
@@ -421,7 +433,8 @@ def main(cfg):
                     if cfg.use_gsv:
                         prompt_gsv = f"\nConsider the question: '{question}', and you will explore the environment for answering it. Is there any direction shown in the image worth exploring? Answer with Yes or No."
                         # logging.info(f"Prompt Exp base: {prompt_gsv}")
-                        gsv = get_vlm_loss(rgb_im, prompt_gsv, ["Yes", "No"])[0]
+                        # gsv = get_vlm_loss(rgb_im, prompt_gsv, ["Yes", "No"])[0]
+                        gsv = vlm.get_loss(rgb_im, prompt_gsv, ["Yes", "No"])[0]
                         gsv = (
                             np.exp(gsv / cfg.gsv_T) / cfg.gsv_F
                         )  # scale before combined with lsv
@@ -552,3 +565,61 @@ if __name__ == "__main__":
     # run
     logging.info(f"***** Running {cfg.exp_name} *****")
     main(cfg)
+
+
+# def run_on_gpu(gpu_id, gpu_index, gpu_count, cfg_file):
+#     from omegaconf import OmegaConf
+#     """在指定 GPU 上运行 main(cfg)，并传递 GPU 信息"""
+#     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)  # 设置可见的 GPU
+#     cfg = OmegaConf.load(cfg_file)
+#     OmegaConf.resolve(cfg)
+
+#     # Set up logging
+#     cfg.output_dir = os.path.join(cfg.output_parent_dir, f"{cfg.exp_name}_gpu{gpu_id}")
+#     if not os.path.exists(cfg.output_dir):
+#         os.makedirs(cfg.output_dir, exist_ok=True)  # recursive
+#     logging_path = os.path.join(cfg.output_dir, f"log_{gpu_id}.log")
+#     logging.basicConfig(
+#         level=logging.INFO,
+#         format="%(message)s",
+#         handlers=[
+#             logging.FileHandler(logging_path, mode="w"),
+#             logging.StreamHandler(),
+#         ],
+#     )
+
+#     # 将 GPU 信息传递给 main 函数
+#     logging.info(f"***** Running {cfg.exp_name} on GPU {gpu_id}/{gpu_count} *****")
+#     main(cfg, gpu_id, gpu_index, gpu_count)
+
+
+# if __name__ == "__main__":
+#     import argparse
+#     import os
+#     import logging
+#     from multiprocessing import Process, set_start_method
+
+#     # 设置多进程启动方式为 spawn
+#     set_start_method("spawn", force=True)
+
+#     # Parse arguments
+#     parser = argparse.ArgumentParser()
+#     parser.add_argument("-cfg", "--cfg_file", help="cfg file path", default="cfg/vlm_exp_ov.yaml", type=str)
+#     parser.add_argument("-gpus", "--gpu_ids", help="Comma-separated GPU IDs to use (e.g., '0,1,2')", type=str, default="0")
+#     args = parser.parse_args()
+
+#     # Get list of GPUs
+#     gpu_ids = [int(gpu_id) for gpu_id in args.gpu_ids.split(",")]
+#     gpu_count = len(gpu_ids)  # 计算 GPU 数量
+
+#     # Launch processes for each GPU
+#     processes = []
+#     for gpu_id in gpu_ids:
+#         gpu_index = gpu_ids.index(gpu_id)
+#         p = Process(target=run_on_gpu, args=(gpu_id, gpu_index, gpu_count, args.cfg_file))
+#         p.start()
+#         processes.append(p)
+
+#     # Wait for all processes to finish
+#     for p in processes:
+#         p.join()

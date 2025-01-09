@@ -54,19 +54,21 @@ def get_vlm_loss(image, prompt, tokens):
     result = json.loads(response.text)
     return np.array(result['result'])
 
-def get_vlm_response(image, prompt):
+def get_vlm_response(image, prompt, kb=None):
     # 调用这个方法需要先启动vlm服务
     img_byte_arr = io.BytesIO()
     image.save(img_byte_arr, format="PNG")  # 可以指定图片格式
     img_byte_arr.seek(0)
 
+    kb = json.dumps(kb) if kb is not None else json.dumps([])
     files = {'image': img_byte_arr}
     data = {
-        "text": prompt
+        "text": prompt,
+        "kb": kb
     }
 
     response = requests.post("http://127.0.0.1:5000/get_response", files=files, data=data)
-    
+
     result = json.loads(response.text)
     return np.array(result['result'])
 

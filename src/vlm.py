@@ -8,23 +8,23 @@ from transformers import Qwen2VLForConditionalGeneration, AutoTokenizer, AutoPro
 from qwen_vl_utils import process_vision_info
 
 class VLM:
-    def __init__(self, cfg):
+    def __init__(self, cfg, device="cuda"):
         start_time = time.time()
         # self.model = load(cfg.model_id, hf_token=cfg.hf_token)
         model_id = cfg.model_name_or_path.split("/")[-1]
         self.model = None
         self.processor = None
-
+        logging.info(f"Loading VLM model {model_id}")
         if model_id == "prism-dinosiglip+7b":
             self.model = load(cfg.model_name_or_path)
-            self.model.to(cfg.device, dtype=torch.bfloat16)
+            self.model.to('cuda', dtype=torch.bfloat16)
 
         elif model_id in ["Qwen2-VL-2B-Instruct", "Qwen2-VL-72B-Instruct"]:
             self.model = Qwen2VLForConditionalGeneration.from_pretrained(
                 cfg.model_name_or_path,
                 torch_dtype=torch.bfloat16,
                 attn_implementation="flash_attention_2",
-                device_map=cfg.device,
+                device_map=device,
             )
             self.processor = AutoProcessor.from_pretrained(cfg.model_name_or_path)
 
@@ -44,37 +44,41 @@ class VLM:
         )
         return generated_text
 
-    def get_response(self, image=None, prompt=None, messages=None):
-        if messages is None:
-            if image is not None:
-                messages = [
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image",
-                                "image": image,
-                            },
-                            {
-                                "type": "text", 
-                                "text": prompt
-                            },
-                        ],
-                    }
-                ]
+    def get_response(self, image=None, prompt=None, kb=None, device="cuda"):
+        # 创建对话信息
+        message = {
+                "role": "user",
+                "content": [],
+        }
+        # 添加图像和提示信息
+        if image is not None:
+            message["content"].append({
+                "type": "image",
+                "image": image,
+            })
+        if prompt is not None:
+            message["content"].append({
+                "type": "text",
+                "text": prompt,
+            })
+        # 添加知识库信息
+        context = []
+        for item in kb:
+            if item['type'] == 'image':
+                message["content"].append({
+                    "type": "image",
+                    "image": item['content'],
+                })
             else:
-                messages = [
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": prompt,
-                            },
-                        ],
-                    }
-                ]
+                context.append(item['content'])
+        if len(context) > 0:
+            message["content"].append({
+                "type": "text",
+                "text": " ".join(context),
+            })
         
+        # print("message:", message)
+        messages = [message]
         # Preparation for inference
         text = self.processor.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
@@ -87,7 +91,7 @@ class VLM:
             padding=True,
             return_tensors="pt",
         )
-        inputs = inputs.to("cuda")
+        inputs = inputs.to(device)
 
         # Inference: Generation of the output
         generated_ids = self.model.generate(**inputs, max_new_tokens=128)

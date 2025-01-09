@@ -36,6 +36,7 @@ from src.geom import get_cam_intr, get_scene_bnds
 from src.tsdf import TSDFPlanner
 from src.utils import interpolate_position_and_rotation, get_vlm_loss, get_vlm_response
 
+from src.vlm import VLM
 import clip
 from src.knowledgebase import DynamicKnowledgeBase
 from sentence_transformers import SentenceTransformer
@@ -72,16 +73,16 @@ def save_rgbd(rgb, depth, save_path="rgbd.png"):
     rgbd = np.concatenate((rgb, depth_image), axis=0)
     plt.imsave(save_path, rgbd)
 
-def draw_letters(rgb_im, prompt_points_pix, letters, fnt, save_path):
+def draw_letters(rgb_im, prompt_points_pix, letters, circle_radius, fnt, save_path):
     rgb_im_draw = rgb_im.copy()
     draw = ImageDraw.Draw(rgb_im_draw)
     for prompt_point_ind, point_pix in enumerate(prompt_points_pix):
         draw.ellipse(
             (
-                point_pix[0] - cfg.visual_prompt.circle_radius,
-                point_pix[1] - cfg.visual_prompt.circle_radius,
-                point_pix[0] + cfg.visual_prompt.circle_radius,
-                point_pix[1] + cfg.visual_prompt.circle_radius,
+                point_pix[0] - circle_radius,
+                point_pix[1] - circle_radius,
+                point_pix[0] + circle_radius,
+                point_pix[1] + circle_radius,
             ),
             fill=(200, 200, 200, 255),
             outline=(0, 0, 0, 255),
@@ -98,7 +99,7 @@ def draw_letters(rgb_im, prompt_points_pix, letters, fnt, save_path):
     rgb_im_draw.save(save_path)
     return rgb_im_draw
 
-def main(cfg):
+def main(cfg, gpu_id, gpu_index, gpu_count):
     camera_tilt = cfg.camera_tilt_deg * np.pi / 180
     img_height = cfg.img_height
     img_width = cfg.img_width
@@ -121,12 +122,16 @@ def main(cfg):
                 ],
                 "init_angle": float(row["init_angle"]),
             }
-    logging.info(f"Loaded {len(questions_data)} questions.")
 
+    device = f"cuda:{gpu_id}"
+    vlm = VLM(cfg.vlm, device=device)
+
+    use_rag = False
     # init memory module
-    text_embedder = SentenceTransformer('/data/zml/models/sentence-transformers/all-MiniLM-L6-v2')
-    image_model, preprocess = clip.load("ViT-B/32", device='cuda')
-    knowledge_base = DynamicKnowledgeBase(text_embedder, (image_model, preprocess))
+    if use_rag:
+        text_embedder = SentenceTransformer('/data/zml/models/sentence-transformers/all-MiniLM-L6-v2', device=device)
+        image_model, preprocess = clip.load("ViT-B/32", device=device)
+        knowledge_base = DynamicKnowledgeBase(text_embedder, (image_model, preprocess), dim=384, gpu_id=gpu_id)
 
     letters = ["A", "B", "C", "D"]  # always four
     fnt = ImageFont.truetype("data/Open_Sans/static/OpenSans-Regular.ttf", 30,)
@@ -134,8 +139,16 @@ def main(cfg):
     # Run all questions
     cnt_data = 0
     results_all = []
-    for question_ind in tqdm(range(len(questions_data))):
+    part_data = len(questions_data) / gpu_count
+    start_idx = int(part_data * gpu_index)
+    end_idx = int(part_data * (gpu_index + 1))
 
+    logging.info(f"Loaded {start_idx} - {end_idx} questions.")
+
+    for question_ind in tqdm(range(start_idx, end_idx)):
+        if use_rag:
+            knowledge_base.clear()
+        kb = []
         # Extract question
         question_data = questions_data[question_ind]
         scene = question_data["scene"]
@@ -247,15 +260,18 @@ def main(cfg):
             depth = obs["depth_sensor"]
 
             rgb_im = Image.fromarray(rgb, mode="RGBA").convert("RGB")
-            caption = get_vlm_response(rgb_im, "Describe this image.")
+            # caption = get_vlm_response(rgb_im, "Describe this image.")
+            if use_rag:
+                caption = vlm.get_response(rgb_im, "Describe this image.", [], device=device)
 
             if cfg.save_obs:
                 save_rgbd(rgb, depth, os.path.join(episode_data_dir, f"{cnt_step}_rgbd.png"))
-                rgb_path = os.path.join(episode_data_dir, "{}.png".format(cnt_step))
-                plt.imsave(rgb_path, rgb)
-                # 当前帧加入知识库
-                knowledge_base.add_text_data(f"{step_name}: position is {pts}, {caption}")
-                knowledge_base.add_image_data(rgb_path)
+                if use_rag:
+                    rgb_path = os.path.join(episode_data_dir, "{}.png".format(cnt_step))
+                    plt.imsave(rgb_path, rgb)
+                    # 当前帧加入知识库
+                    knowledge_base.add_text_data(f"{step_name}: position is {pts}, {caption}", device=device)
+                    knowledge_base.add_image_data(rgb_path, device=device)
 
             num_black_pixels = np.sum(
                 np.sum(rgb, axis=-1) == 0
@@ -272,23 +288,33 @@ def main(cfg):
                     margin_w=int(cfg.margin_w_ratio * img_width),
                 )
 
-                tsdf_planner.get_mesh(f"results/scenes/scene_{cnt_data}.ply")
+                tsdf_planner.get_mesh(f"results/scenes/scene_{question_ind}.ply")
 
                 # 模型判断是否有信心回答当前问题
                 prompt_rel = f"\nConsider the question: '{question}'. Are you confident about answering the question with the current view? Answer with Yes or No."
-                smx_vlm_rel = get_vlm_response(rgb_im, prompt_rel)[0]
+                if use_rag:
+                    kb = knowledge_base.search(prompt_rel)
+                # logging.info(f"Confident Question: {prompt_rel}, \nKnowledge Base: {kb}")
+                # smx_vlm_rel = get_vlm_response(rgb_im, prompt_rel, kb)[0]
+                smx_vlm_rel = vlm.get_response(rgb_im, prompt_rel, kb, device=device)[0]
                 logging.info(f"Rel - Prob: {smx_vlm_rel}")
 
+                prompt_question = (vlm_question + "\nAnswer with the option's letter from the given choices directly.")
                 # 如果有信心回答，则直接获取答案
                 if smx_vlm_rel.lower() == "yes":
-                    prompt_question = (
-                        vlm_question
-                        + "\nAnswer with the option's letter from the given choices directly."
-                    )
+                    # prompt_question = vlm_question
                     logging.info(f"Prompt Pred: {prompt_question}")
-                    smx_vlm_pred = get_vlm_response(rgb_im, prompt_question)[0].strip(".")
+                    if use_rag:
+                        kb = knowledge_base.search(prompt_question)
+                    # smx_vlm_pred = get_vlm_response(rgb_im, prompt_question, kb)[0].strip(".")
+                    smx_vlm_pred = vlm.get_response(rgb_im, prompt_question, kb, device=device)[0].strip(".")
                     logging.info(f"Pred - Prob: {smx_vlm_pred}")
                     break
+                else:
+                    if use_rag:
+                        kb = knowledge_base.search(prompt_question)
+                    smx_vlm_pred = vlm.get_response(rgb_im, prompt_question, kb, device=device)[0].strip(".")
+                    logging.info(f"Pred - Prob: {smx_vlm_pred} {smx_vlm_pred==answer}")
 
                 # Get frontier candidates
                 prompt_points_pix = []
@@ -310,12 +336,20 @@ def main(cfg):
                 # Visual prompting
                 actual_num_prompt_points = len(prompt_points_pix)
                 if actual_num_prompt_points >= cfg.visual_prompt.min_num_prompt_points:
-                    rgb_im_draw = draw_letters(rgb_im, prompt_points_pix, letters, fnt, os.path.join(episode_data_dir, f"{cnt_step}_draw.png"))
+                    rgb_im_draw = draw_letters(rgb_im, 
+                                               prompt_points_pix, 
+                                               letters, 
+                                               cfg.visual_prompt.circle_radius, 
+                                               fnt, 
+                                               os.path.join(episode_data_dir, f"{cnt_step}_draw.png"))
 
                     # get VLM reasoning for exploring
                     if cfg.use_lsv:
                         prompt_lsv = f"\nConsider the question: '{question}', and you will explore the environment for answering it.\nWhich direction (black letters on the image) would you explore then? Answer with a single letter."
-                        response = get_vlm_response(rgb_im_draw, prompt_lsv)[0]
+                        if use_rag:
+                            kb = knowledge_base.search(prompt_lsv)
+                        # response = get_vlm_response(rgb_im_draw, prompt_lsv, kb)[0]
+                        response = vlm.get_response(rgb_im_draw, prompt_lsv, kb, device=device)[0]
                         lsv = np.zeros(actual_num_prompt_points)
                         for i in range(actual_num_prompt_points):
                             if response == letters[i]:
@@ -329,7 +363,10 @@ def main(cfg):
                     # base - use image without label
                     if cfg.use_gsv:
                         prompt_gsv = f"\nConsider the question: '{question}', and you will explore the environment for answering it. Is there any direction shown in the image worth exploring? Answer with Yes or No."
-                        response = get_vlm_response(rgb_im, prompt_gsv)[0]
+                        if use_rag:
+                            kb = knowledge_base.search(prompt_gsv)
+                        # response = get_vlm_response(rgb_im, prompt_gsv, kb)[0]
+                        response = vlm.get_response(rgb_im, prompt_gsv, kb, device=device)[0]
                         gsv = np.zeros(2)
                         if response == "Yes":
                             gsv[0] = 1
@@ -385,6 +422,16 @@ def main(cfg):
                 quat_from_angle_axis(angle, np.array([0, 1, 0]))
             ).tolist()
 
+        # Final prediction
+        if cnt_step == num_step - 1:
+            logging.info("Max step reached!")
+            prompt_question = (vlm_question + "\nAnswer with the option's letter from the given choices directly.")
+            # logging.info(f"Prompt Pred: {prompt_question}")
+            if use_rag:
+                kb = knowledge_base.search(prompt_question)
+            smx_vlm_pred = vlm.get_response(rgb_im, prompt_question, kb, device=device)[0].strip(".")
+            logging.info(f"Pred - Prob: {smx_vlm_pred}")
+
         if smx_vlm_pred is not None:
             is_success = smx_vlm_pred == answer
         else:
@@ -401,7 +448,7 @@ def main(cfg):
         cnt_data += 1
         if cnt_data % cfg.save_freq == 0:
             with open(
-                os.path.join(cfg.output_dir, f"results_{cnt_data}.pkl"), "wb"
+                os.path.join(cfg.output_dir, f"results_{gpu_id}_{cnt_data}.pkl"), "wb"
             ) as f:
                 pickle.dump(results_all, f)
 
@@ -412,22 +459,18 @@ def main(cfg):
     logging.info(f"Number of data collected: {cnt_data}")
 
 
-if __name__ == "__main__":
-    import argparse
+def run_on_gpu(gpu_id, gpu_index, gpu_count, cfg_file):
     from omegaconf import OmegaConf
-
-    # get config path
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-cfg", "--cfg_file", help="cfg file path", default="cfg/vlm_exp_ov.yaml", type=str)
-    args = parser.parse_args()
-    cfg = OmegaConf.load(args.cfg_file)
+    """在指定 GPU 上运行 main(cfg)，并传递 GPU 信息"""
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)  # 设置可见的 GPU
+    cfg = OmegaConf.load(cfg_file)
     OmegaConf.resolve(cfg)
 
     # Set up logging
-    cfg.output_dir = os.path.join(cfg.output_parent_dir, cfg.exp_name)
+    cfg.output_dir = os.path.join(cfg.output_parent_dir, f"{cfg.exp_name}_gpu{gpu_id}")
     if not os.path.exists(cfg.output_dir):
         os.makedirs(cfg.output_dir, exist_ok=True)  # recursive
-    logging_path = os.path.join(cfg.output_dir, "log.log")
+    logging_path = os.path.join(cfg.output_dir, f"log_{gpu_id}.log")
     logging.basicConfig(
         level=logging.INFO,
         format="%(message)s",
@@ -437,6 +480,38 @@ if __name__ == "__main__":
         ],
     )
 
-    # run
-    logging.info(f"***** Running {cfg.exp_name} *****")
-    main(cfg)
+    # 将 GPU 信息传递给 main 函数
+    logging.info(f"***** Running {cfg.exp_name} on GPU {gpu_id}/{gpu_count} *****")
+    main(cfg, gpu_id, gpu_index, gpu_count)
+
+
+if __name__ == "__main__":
+    import argparse
+    import os
+    import logging
+    from multiprocessing import Process, set_start_method
+
+    # 设置多进程启动方式为 spawn
+    set_start_method("spawn", force=True)
+
+    # Parse arguments
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-cfg", "--cfg_file", help="cfg file path", default="cfg/vlm_exp_ov.yaml", type=str)
+    parser.add_argument("-gpus", "--gpu_ids", help="Comma-separated GPU IDs to use (e.g., '0,1,2')", type=str, default="0")
+    args = parser.parse_args()
+
+    # Get list of GPUs
+    gpu_ids = [int(gpu_id) for gpu_id in args.gpu_ids.split(",")]
+    gpu_count = len(gpu_ids)  # 计算 GPU 数量
+
+    # Launch processes for each GPU
+    processes = []
+    for gpu_id in gpu_ids:
+        gpu_index = gpu_ids.index(gpu_id)
+        p = Process(target=run_on_gpu, args=(gpu_id, gpu_index, gpu_count, args.cfg_file))
+        p.start()
+        processes.append(p)
+
+    # Wait for all processes to finish
+    for p in processes:
+        p.join()
