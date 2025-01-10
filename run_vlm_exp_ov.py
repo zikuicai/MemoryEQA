@@ -4,6 +4,7 @@ Run EQA in Habitat-Sim with VLM exploration.
 """
 
 import os
+import json
 
 os.environ["TRANSFORMERS_VERBOSITY"] = "error"  # disable warning
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -103,6 +104,7 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
     camera_tilt = cfg.camera_tilt_deg * np.pi / 180
     img_height = cfg.img_height
     img_width = cfg.img_width
+
     cam_intr = get_cam_intr(cfg.hfov, img_height, img_width)
 
     # Load dataset
@@ -126,9 +128,8 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
     device = f"cuda:{gpu_id}"
     vlm = VLM(cfg.vlm, device=device)
 
-    use_rag = False
     # init memory module
-    if use_rag:
+    if cfg.use_rag:
         text_embedder = SentenceTransformer('/data/zml/models/sentence-transformers/all-MiniLM-L6-v2', device=device)
         image_model, preprocess = clip.load("ViT-B/32", device=device)
         knowledge_base = DynamicKnowledgeBase(text_embedder, (image_model, preprocess), dim=384, gpu_id=gpu_id)
@@ -146,7 +147,7 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
     logging.info(f"Loaded {start_idx} - {end_idx} questions.")
 
     for question_ind in tqdm(range(start_idx, end_idx)):
-        if use_rag:
+        if cfg.use_rag:
             knowledge_base.clear()
         kb = []
         # Extract question
@@ -171,7 +172,6 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
         # Set data dir for this question - set initial data to be saved
         episode_data_dir = os.path.join(cfg.output_dir, str(question_ind))
         os.makedirs(episode_data_dir, exist_ok=True)
-        result = {"question_ind": question_ind}
 
         # Set up scene in Habitat
         try:
@@ -202,7 +202,7 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
 
         agent = simulator.initialize_agent(sim_settings["default_agent"])
         agent_state = habitat_sim.AgentState()
-        pts = init_pts
+        pts = np.array(init_pts)
         angle = init_angle
 
         # Floor - use pts height as floor height
@@ -216,6 +216,19 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
         logging.info(
             f"Scene size: {scene_size} Floor height: {floor_height} Steps: {num_step}"
         )
+
+        result = {
+            "meta": {
+                "question_ind": question_ind,
+                "question": vlm_question,
+                "answer": answer,
+                "scene": scene,
+                "floor": floor,
+                "max_steps": num_step,
+            },
+            "step": [],
+            "summary": {},
+        }
 
         # Initialize TSDF
         tsdf_planner = TSDFPlanner(
@@ -241,7 +254,8 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
             agent.set_state(agent_state)
 
             pts_normal = pos_habitat_to_normal(pts)
-            result[step_name] = {"pts": pts, "angle": angle}
+            
+            result["step"].append({"step": cnt_step, "pts": pts.tolist(), "angle": angle})
 
             # Update camera info
             sensor = agent.get_state().sensor_states["depth_sensor"]
@@ -260,13 +274,12 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
             depth = obs["depth_sensor"]
 
             rgb_im = Image.fromarray(rgb, mode="RGBA").convert("RGB")
-            # caption = get_vlm_response(rgb_im, "Describe this image.")
-            if use_rag:
+            if cfg.use_rag:
                 caption = vlm.get_response(rgb_im, "Describe this image.", [], device=device)
 
             if cfg.save_obs:
                 save_rgbd(rgb, depth, os.path.join(episode_data_dir, f"{cnt_step}_rgbd.png"))
-                if use_rag:
+                if cfg.use_rag:
                     rgb_path = os.path.join(episode_data_dir, "{}.png".format(cnt_step))
                     plt.imsave(rgb_path, rgb)
                     # 当前帧加入知识库
@@ -292,29 +305,27 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
 
                 # 模型判断是否有信心回答当前问题
                 prompt_rel = f"\nConsider the question: '{question}'. Are you confident about answering the question with the current view? Answer with Yes or No."
-                if use_rag:
-                    kb = knowledge_base.search(prompt_rel)
-                # logging.info(f"Confident Question: {prompt_rel}, \nKnowledge Base: {kb}")
-                # smx_vlm_rel = get_vlm_response(rgb_im, prompt_rel, kb)[0]
+                # if cfg.use_rag:
+                #     kb = knowledge_base.search(prompt_rel)
+                kb = []
                 smx_vlm_rel = vlm.get_response(rgb_im, prompt_rel, kb, device=device)[0]
                 logging.info(f"Rel - Prob: {smx_vlm_rel}")
 
                 prompt_question = (vlm_question + "\nAnswer with the option's letter from the given choices directly.")
+                logging.info(f"Prompt Pred: {prompt_question}")
+                if cfg.use_rag:
+                    kb = knowledge_base.search(prompt_question)
+                smx_vlm_pred = vlm.get_response(rgb_im, prompt_question, kb, device=device)[0].strip(".")
+                logging.info(f"Pred - Prob: {smx_vlm_pred}")
+
+                # save data
+                result["step"][cnt_step]["smx_vlm_rel"] = smx_vlm_rel
+                result["step"][cnt_step]["smx_vlm_pred"] = smx_vlm_pred
+                result["step"][cnt_step]["is_success"] = smx_vlm_pred == answer
+
                 # 如果有信心回答，则直接获取答案
                 if smx_vlm_rel.lower() == "yes":
-                    # prompt_question = vlm_question
-                    logging.info(f"Prompt Pred: {prompt_question}")
-                    if use_rag:
-                        kb = knowledge_base.search(prompt_question)
-                    # smx_vlm_pred = get_vlm_response(rgb_im, prompt_question, kb)[0].strip(".")
-                    smx_vlm_pred = vlm.get_response(rgb_im, prompt_question, kb, device=device)[0].strip(".")
-                    logging.info(f"Pred - Prob: {smx_vlm_pred}")
                     break
-                else:
-                    if use_rag:
-                        kb = knowledge_base.search(prompt_question)
-                    smx_vlm_pred = vlm.get_response(rgb_im, prompt_question, kb, device=device)[0].strip(".")
-                    logging.info(f"Pred - Prob: {smx_vlm_pred} {smx_vlm_pred==answer}")
 
                 # Get frontier candidates
                 prompt_points_pix = []
@@ -346,7 +357,7 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
                     # get VLM reasoning for exploring
                     if cfg.use_lsv:
                         prompt_lsv = f"\nConsider the question: '{question}', and you will explore the environment for answering it.\nWhich direction (black letters on the image) would you explore then? Answer with a single letter."
-                        if use_rag:
+                        if cfg.use_rag:
                             kb = knowledge_base.search(prompt_lsv)
                         # response = get_vlm_response(rgb_im_draw, prompt_lsv, kb)[0]
                         response = vlm.get_response(rgb_im_draw, prompt_lsv, kb, device=device)[0]
@@ -359,13 +370,12 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
                         lsv = (
                             np.ones(actual_num_prompt_points) / actual_num_prompt_points
                         )
-
+                    
                     # base - use image without label
                     if cfg.use_gsv:
                         prompt_gsv = f"\nConsider the question: '{question}', and you will explore the environment for answering it. Is there any direction shown in the image worth exploring? Answer with Yes or No."
-                        if use_rag:
+                        if cfg.use_rag:
                             kb = knowledge_base.search(prompt_gsv)
-                        # response = get_vlm_response(rgb_im, prompt_gsv, kb)[0]
                         response = vlm.get_response(rgb_im, prompt_gsv, kb, device=device)[0]
                         gsv = np.zeros(2)
                         if response == "Yes":
@@ -387,12 +397,8 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
                         obs_weight=1.0,
                     )  # voxel locations already saved in tsdf class
 
-                # Save data
-                result[step_name]["smx_vlm_rel"] = smx_vlm_rel
             else:
                 logging.info("Skipping black image!")
-                result[step_name]["smx_vlm_pred"] = np.ones((4)) / 4
-                result[step_name]["smx_vlm_rel"] = np.array([0.01, 0.99])
 
             # Determine next point
             if cnt_step < num_step:
@@ -427,7 +433,7 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
             logging.info("Max step reached!")
             prompt_question = (vlm_question + "\nAnswer with the option's letter from the given choices directly.")
             # logging.info(f"Prompt Pred: {prompt_question}")
-            if use_rag:
+            if cfg.use_rag:
                 kb = knowledge_base.search(prompt_question)
             smx_vlm_pred = vlm.get_response(rgb_im, prompt_question, kb, device=device)[0].strip(".")
             logging.info(f"Pred - Prob: {smx_vlm_pred}")
@@ -442,19 +448,19 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
         logging.info(f"Scene: {scene}, Floor: {floor}")
         logging.info(f"Question:\n{vlm_question}\nAnswer: {answer}")
         logging.info(f"Success (max): {is_success}")
-
+        result["summary"]["smx_vlm_pred"] = smx_vlm_pred
+        result["summary"]["smx_vlm_pred"] = smx_vlm_pred
+        result["summary"]["is_success"] = is_success
         # Save data
         results_all.append(result)
         cnt_data += 1
         if cnt_data % cfg.save_freq == 0:
-            with open(
-                os.path.join(cfg.output_dir, f"results_{gpu_id}_{cnt_data}.pkl"), "wb"
-            ) as f:
-                pickle.dump(results_all, f)
+            with open(os.path.join(cfg.output_dir, f"results_{gpu_id}_{cnt_data}.json"), "w") as f:
+                json.dump(results_all, f, indent=4)
 
     # Save all data again
-    with open(os.path.join(cfg.output_dir, "results.pkl"), "wb") as f:
-        pickle.dump(results_all, f)
+    with open(os.path.join(cfg.output_dir, "results.json"), "w") as f:
+        json.dump(results_all, f, indent=4)
     logging.info(f"\n== All Summary")
     logging.info(f"Number of data collected: {cnt_data}")
 
@@ -467,7 +473,7 @@ def run_on_gpu(gpu_id, gpu_index, gpu_count, cfg_file):
     OmegaConf.resolve(cfg)
 
     # Set up logging
-    cfg.output_dir = os.path.join(cfg.output_parent_dir, f"{cfg.exp_name}_gpu{gpu_id}")
+    cfg.output_dir = os.path.join(cfg.output_parent_dir, f"{cfg.exp_name}/{cfg.exp_name}_gpu{gpu_id}")
     if not os.path.exists(cfg.output_dir):
         os.makedirs(cfg.output_dir, exist_ok=True)  # recursive
     logging_path = os.path.join(cfg.output_dir, f"log_{gpu_id}.log")

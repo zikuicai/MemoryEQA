@@ -8,9 +8,9 @@ class DynamicKnowledgeBase:
     def __init__(self, text_embedder, image_model, dim=384, gpu_id=0):
         # 初始化FAISS索引和文本图像嵌入器
         res = faiss.StandardGpuResources()  # GPU资源
-        index_cpu = faiss.IndexFlatL2(dim)
-        self.index = faiss.index_cpu_to_all_gpus(index_cpu)
-        # self.index = faiss.GpuIndexFlatL2(res, dim, gpu_id)  # FAISS GPU索引
+        # index_cpu = faiss.IndexFlatL2(dim)
+        # self.index = faiss.index_cpu_to_all_gpus(index_cpu)
+        self.index = faiss.GpuIndexFlatL2(res, dim)  # FAISS GPU索引
         
         self.text_embedder = text_embedder
         self.image_model, self.preprocess = image_model
