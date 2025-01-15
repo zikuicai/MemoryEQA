@@ -107,6 +107,12 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
 
     cam_intr = get_cam_intr(cfg.hfov, img_height, img_width)
 
+    prompt_caption = f"Describe this image."
+    prompt_rel = "\nConsider the question: '{}'. Are you confident about answering the question with the current view? Answer with Yes or No."
+    prompt_question = "{}\nAnswer with the option's letter from the given choices directly."
+    prompt_lsv = "\nConsider the question: '{}', and you will explore the environment for answering it.\nWhich direction (black letters on the image) would you explore then? Answer with a single letter."
+    prompt_gsv = "\nConsider the question: '{}', and you will explore the environment for answering it. Is there any direction shown in the image worth exploring? Answer with Yes or No."
+
     # Load dataset
     with open(cfg.question_data_path) as f:
         questions_data = [
@@ -129,10 +135,9 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
     vlm = VLM(cfg.vlm, device=device)
 
     # init memory module
-    if cfg.use_rag:
-        text_embedder = SentenceTransformer('/data/zml/models/sentence-transformers/all-MiniLM-L6-v2', device=device)
-        image_model, preprocess = clip.load("ViT-B/32", device=device)
-        knowledge_base = DynamicKnowledgeBase(text_embedder, (image_model, preprocess), dim=384, gpu_id=gpu_id)
+    rag_cfg = cfg.rag
+    if rag_cfg.use_rag:
+        knowledge_base = DynamicKnowledgeBase(rag_cfg, device=device)
 
     letters = ["A", "B", "C", "D"]  # always four
     fnt = ImageFont.truetype("data/Open_Sans/static/OpenSans-Regular.ttf", 30,)
@@ -147,7 +152,7 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
     logging.info(f"Loaded {start_idx} - {end_idx} questions.")
 
     for question_ind in tqdm(range(start_idx, end_idx)):
-        if cfg.use_rag:
+        if rag_cfg.use_rag:
             knowledge_base.clear()
         kb = []
         # Extract question
@@ -166,7 +171,7 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
         vlm_question = question
         vlm_pred_candidates = ["A", "B", "C", "D"]
         for token, choice in zip(vlm_pred_candidates, choices):
-            vlm_question += "\n" + token + "." + " " + choice
+            vlm_question += "\n" + token + ". " + choice
         logging.info(f"Question:\n{vlm_question}\nAnswer: {answer}")
 
         # Set data dir for this question - set initial data to be saved
@@ -274,17 +279,18 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
             depth = obs["depth_sensor"]
 
             rgb_im = Image.fromarray(rgb, mode="RGBA").convert("RGB")
-            if cfg.use_rag:
-                caption = vlm.get_response(rgb_im, "Describe this image.", [], device=device)
+            if rag_cfg.use_rag:
+                caption = vlm.get_response(rgb_im, prompt_caption, [], device=device)
 
             if cfg.save_obs:
                 save_rgbd(rgb, depth, os.path.join(episode_data_dir, f"{cnt_step}_rgbd.png"))
-                if cfg.use_rag:
+                if rag_cfg.use_rag:
                     rgb_path = os.path.join(episode_data_dir, "{}.png".format(cnt_step))
                     plt.imsave(rgb_path, rgb)
                     # 当前帧加入知识库
-                    knowledge_base.add_text_data(f"{step_name}: position is {pts}, {caption}", device=device)
-                    knowledge_base.add_image_data(rgb_path, device=device)
+                    # knowledge_base.add_text_data(f"{step_name}: position is {pts}, {caption}", device=device)
+                    # knowledge_base.add_image_data(rgb_path, device=device)
+                    knowledge_base.add_to_knowledge_base(f"{step_name}: position is {pts}, {caption}", rgb_im, device=device)
 
             num_black_pixels = np.sum(
                 np.sum(rgb, axis=-1) == 0
@@ -304,18 +310,21 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
                 tsdf_planner.get_mesh(f"results/scenes/scene_{question_ind}.ply")
 
                 # 模型判断是否有信心回答当前问题
-                prompt_rel = f"\nConsider the question: '{question}'. Are you confident about answering the question with the current view? Answer with Yes or No."
-                # if cfg.use_rag:
-                #     kb = knowledge_base.search(prompt_rel)
-                kb = []
-                smx_vlm_rel = vlm.get_response(rgb_im, prompt_rel, kb, device=device)[0]
+                if rag_cfg.use_rag:
+                    kb = knowledge_base.search(prompt_rel.format(question), 
+                                               rgb_im, 
+                                               top_k=rag_cfg.max_retrieval_num if cnt_step > rag_cfg.max_retrieval_num else cnt_step,
+                                               device=device)
+                smx_vlm_rel = vlm.get_response(rgb_im, prompt_rel.format(question), kb, device=device)[0].strip(".")
                 logging.info(f"Rel - Prob: {smx_vlm_rel}")
 
-                prompt_question = (vlm_question + "\nAnswer with the option's letter from the given choices directly.")
-                logging.info(f"Prompt Pred: {prompt_question}")
-                if cfg.use_rag:
-                    kb = knowledge_base.search(prompt_question)
-                smx_vlm_pred = vlm.get_response(rgb_im, prompt_question, kb, device=device)[0].strip(".")
+                logging.info(f"Prompt Pred: {prompt_question.format(vlm_question)}")
+                if rag_cfg.use_rag:
+                    kb = knowledge_base.search(prompt_question.format(vlm_question), 
+                                               rgb_im, 
+                                               top_k=rag_cfg.max_retrieval_num if cnt_step > rag_cfg.max_retrieval_num else cnt_step,
+                                               device=device)
+                smx_vlm_pred = vlm.get_response(rgb_im, prompt_question.format(vlm_question), kb, device=device)[0].strip(".")
                 logging.info(f"Pred - Prob: {smx_vlm_pred}")
 
                 # save data
@@ -356,11 +365,12 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
 
                     # get VLM reasoning for exploring
                     if cfg.use_lsv:
-                        prompt_lsv = f"\nConsider the question: '{question}', and you will explore the environment for answering it.\nWhich direction (black letters on the image) would you explore then? Answer with a single letter."
-                        if cfg.use_rag:
-                            kb = knowledge_base.search(prompt_lsv)
-                        # response = get_vlm_response(rgb_im_draw, prompt_lsv, kb)[0]
-                        response = vlm.get_response(rgb_im_draw, prompt_lsv, kb, device=device)[0]
+                        if rag_cfg.use_rag:
+                            kb = knowledge_base.search(prompt_lsv.format(question), 
+                                                       rgb_im, 
+                                                       top_k=rag_cfg.max_retrieval_num if cnt_step > rag_cfg.max_retrieval_num else cnt_step,
+                                                       device=device)
+                        response = vlm.get_response(rgb_im_draw, prompt_lsv.format(question), kb, device=device)[0]
                         lsv = np.zeros(actual_num_prompt_points)
                         for i in range(actual_num_prompt_points):
                             if response == letters[i]:
@@ -373,10 +383,12 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
                     
                     # base - use image without label
                     if cfg.use_gsv:
-                        prompt_gsv = f"\nConsider the question: '{question}', and you will explore the environment for answering it. Is there any direction shown in the image worth exploring? Answer with Yes or No."
-                        if cfg.use_rag:
-                            kb = knowledge_base.search(prompt_gsv)
-                        response = vlm.get_response(rgb_im, prompt_gsv, kb, device=device)[0]
+                        if rag_cfg.use_rag:
+                            kb = knowledge_base.search(prompt_gsv.format(question), 
+                                                       rgb_im, 
+                                                       top_k=rag_cfg.max_retrieval_num if cnt_step > rag_cfg.max_retrieval_num else cnt_step,
+                                                       device=device)
+                        response = vlm.get_response(rgb_im, prompt_gsv.format(question), kb, device=device)[0].strip(".")
                         gsv = np.zeros(2)
                         if response == "Yes":
                             gsv[0] = 1
@@ -431,11 +443,12 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
         # Final prediction
         if cnt_step == num_step - 1:
             logging.info("Max step reached!")
-            prompt_question = (vlm_question + "\nAnswer with the option's letter from the given choices directly.")
-            # logging.info(f"Prompt Pred: {prompt_question}")
-            if cfg.use_rag:
-                kb = knowledge_base.search(prompt_question)
-            smx_vlm_pred = vlm.get_response(rgb_im, prompt_question, kb, device=device)[0].strip(".")
+            if rag_cfg.use_rag:
+                kb = knowledge_base.search(prompt_question.format(vlm_question), 
+                                           rgb_im, 
+                                           top_k=rag_cfg.max_retrieval_num if cnt_step > rag_cfg.max_retrieval_num else cnt_step,
+                                           device=device)
+            smx_vlm_pred = vlm.get_response(rgb_im, prompt_question.format(vlm_question), kb, device=device)[0].strip(".")
             logging.info(f"Pred - Prob: {smx_vlm_pred}")
 
         if smx_vlm_pred is not None:

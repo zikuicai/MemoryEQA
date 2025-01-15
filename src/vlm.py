@@ -19,14 +19,16 @@ class VLM:
             self.model = load(cfg.model_name_or_path)
             self.model.to('cuda', dtype=torch.bfloat16)
 
-        elif model_id in ["Qwen2-VL-2B-Instruct", "Qwen2-VL-72B-Instruct"]:
+        elif model_id in ["Qwen2-VL-2B-Instruct", "Qwen2-VL-72B-Instruct", "Qwen2-VL-7B-Instruct", "Qwen2-VL-72B-Instruct-GPTQ-Int4", "Qwen2-VL-72B-Instruct-GPTQ-Int8"]:
             self.model = Qwen2VLForConditionalGeneration.from_pretrained(
                 cfg.model_name_or_path,
-                torch_dtype=torch.bfloat16,
+                torch_dtype="auto",
                 attn_implementation="flash_attention_2",
                 device_map=device,
             )
             self.processor = AutoProcessor.from_pretrained(cfg.model_name_or_path)
+        else:
+            raise ValueError(f"Unknown model_id: {model_id}")
 
         logging.info(f"Loaded VLM in {time.time() - start_time:.3f}s")
 
@@ -50,6 +52,30 @@ class VLM:
                 "role": "user",
                 "content": [],
         }
+        # 添加知识库信息
+        context = []
+        for item in kb:
+            message["content"].append({
+                    "type": "image",
+                    "image": item['image'],
+                })
+            message["content"].append({
+                    "type": "text",
+                    "text": item['text'],
+                })
+            # if item['type'] == 'image':
+            #     message["content"].append({
+            #         "type": "image",
+            #         "image": item['content'],
+            #     })
+            # else:
+            #     # context.append(item['content'])
+            #     message["content"].append({
+            #         "type": "text",
+            #         "text": item['content'],
+            #     })
+
+
         # 添加图像和提示信息
         if image is not None:
             message["content"].append({
@@ -61,23 +87,11 @@ class VLM:
                 "type": "text",
                 "text": prompt,
             })
-        # 添加知识库信息
-        context = []
-        for item in kb:
-            if item['type'] == 'image':
-                message["content"].append({
-                    "type": "image",
-                    "image": item['content'],
-                })
-            else:
-                context.append(item['content'])
-        if len(context) > 0:
-            message["content"].append({
-                "type": "text",
-                "text": " ".join(context),
-            })
-        
-        # print("message:", message)
+        # if len(context) > 0:
+        #     message["content"].append({
+        #         "type": "text",
+        #         "text": " ".join(context),
+        #     })
         messages = [message]
         # Preparation for inference
         text = self.processor.apply_chat_template(

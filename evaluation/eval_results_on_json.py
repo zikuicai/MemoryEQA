@@ -82,11 +82,13 @@ def evaluate(files_path):
 if __name__ == '__main__':
     # 示例用法
     files_path = [
-        'results/qwen2vl_rag_allsteps/qwen2vl_rag_allsteps_gpu0/results.json',
-        'results/qwen2vl_rag_allsteps/qwen2vl_rag_allsteps_gpu1/results.json',
-        'results/qwen2vl_rag_allsteps/qwen2vl_rag_allsteps_gpu2/results.json',
-        'results/qwen2vl_rag_allsteps/qwen2vl_rag_allsteps_gpu3/results.json',
-        'results/qwen2vl_rag_allsteps/qwen2vl_rag_allsteps_gpu4/results.json',
-        'results/qwen2vl_rag_allsteps/qwen2vl_rag_allsteps_gpu5/results.json',
+        'results/7.2.qwen2vl_bliprag_allsteps/7.2.qwen2vl_bliprag_allsteps_gpu0/results.json',
+        'results/7.2.qwen2vl_bliprag_allsteps/7.2.qwen2vl_bliprag_allsteps_gpu1/results.json',
+        'results/7.2.qwen2vl_bliprag_allsteps/7.2.qwen2vl_bliprag_allsteps_gpu2/results.json',
+        'results/7.2.qwen2vl_bliprag_allsteps/7.2.qwen2vl_bliprag_allsteps_gpu3/results.json',
+        'results/7.2.qwen2vl_bliprag_allsteps/7.2.qwen2vl_bliprag_allsteps_gpu4/results.json',
+        'results/7.2.qwen2vl_bliprag_allsteps/7.2.qwen2vl_bliprag_allsteps_gpu5/results.json',
+        'results/7.2.qwen2vl_bliprag_allsteps/7.2.qwen2vl_bliprag_allsteps_gpu6/results.json',
+        'results/7.2.qwen2vl_bliprag_allsteps/7.2.qwen2vl_bliprag_allsteps_gpu7/results.json',
     ]
     evaluate(files_path)
