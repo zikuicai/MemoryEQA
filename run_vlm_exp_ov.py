@@ -107,12 +107,13 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
 
     cam_intr = get_cam_intr(cfg.hfov, img_height, img_width)
 
-    prompt_caption = f"Describe this image."
-    prompt_rel = "\nConsider the question: '{}'. Are you confident about answering the question with the current view? Answer with Yes or No."
-    prompt_question = "{}\nAnswer with the option's letter from the given choices directly."
-    prompt_lsv = "\nConsider the question: '{}', and you will explore the environment for answering it.\nWhich direction (black letters on the image) would you explore then? Answer with a single letter."
-    prompt_gsv = "\nConsider the question: '{}', and you will explore the environment for answering it. Is there any direction shown in the image worth exploring? Answer with Yes or No."
-
+    prompt = cfg.prompt
+    prompt_caption = prompt.caption
+    prompt_rel = prompt.relevent
+    prompt_question = prompt.question
+    prompt_lsv = prompt.local_sem
+    prompt_gsv = prompt.global_sem
+    
     # Load dataset
     with open(cfg.question_data_path) as f:
         questions_data = [
@@ -333,7 +334,7 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
                 result["step"][cnt_step]["is_success"] = smx_vlm_pred == answer
 
                 # 如果有信心回答，则直接获取答案
-                if smx_vlm_rel.lower() == "yes":
+                if smx_vlm_rel in ["C", "D", "E"]:
                     break
 
                 # Get frontier candidates
