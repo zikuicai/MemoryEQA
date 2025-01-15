@@ -1,0 +1,2 @@
+device: 'cuda'
+model_name_or_path: /data/zml/models/Qwen2-VL/Qwen2-VL-7B-Instruct

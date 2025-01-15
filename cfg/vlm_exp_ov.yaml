@@ -1,0 +1,78 @@
+# General
+seed: 42
+exp_name: 3.2.qwen2vl_cliprag_allsteps
+output_parent_dir: results
+question_data_path: ./data/HM-EQA/questions.csv
+init_pose_data_path: ./data/scene_init_poses.csv
+scene_data_path: ./data/HM3D
+save_obs: true
+save_freq: 20
+
+# Question answering
+vlm:
+  device: 'cuda'
+  model_name_or_path: /home/zml/model/Qwen2-VL-72B-Instruct-GPTQ-Int4
+
+rag:
+  use_rag: true
+  text: '/data/zml/models/openai/clip-vit-large-patch14'
+  visual: '/data/zml/models/openai/clip-vit-large-patch14'
+  dim: 1536
+  max_retrieval_num: 1
+
+prompt:
+  caption: f"Describe this image."
+  relevent: "\nConsider the question: '{}'. How confident are you in answering this question from your current perspective?\nA. Very low\nB. Low\nC. Medium\nD. High\nE. Very high\nAnswer with the option's letter from the given choices directly."
+  question: "{}\nAnswer with the option's letter from the given choices directly."
+  local_sem: "\nConsider the question: '{}', and you will explore the environment for answering it.\nWhich direction (black letters on the image) would you explore then? Answer with a single letter."
+  global_sem: "\nConsider the question: '{}', and you will explore the environment for answering it. Is there any direction shown in the image worth exploring? Answer with Yes or No."
+
+# Camera, image
+camera_height: 1.5
+camera_tilt_deg: -30
+img_width: 640
+img_height: 480
+hfov: 120
+tsdf_grid_size: 0.1
+margin_w_ratio: 0.25
+margin_h_ratio: 0.6
+
+# Navigation
+init_clearance: 0.5
+max_step_room_size_ratio: 3
+black_pixel_ratio: 0.7
+min_random_init_steps: 2
+
+# Semantic map
+use_active: true
+use_lsv: true
+use_gsv: true
+gsv_T: 0.5
+gsv_F: 3
+planner:
+  dist_T: 10
+  unexplored_T: 0.2
+  unoccupied_T: 2.0
+  val_T: 0.5
+  val_dir_T: 0.5
+  max_val_check_frontier: 3
+  smooth_sigma: 5
+  eps: 1
+  min_dist_from_cur: 0.5
+  max_dist_from_cur: 3
+  frontier_spacing: 1.5
+  frontier_min_neighbors: 3
+  frontier_max_neighbors: 4
+  max_unexplored_check_frontier: 3
+  max_unoccupied_check_frontier: 1
+
+visual_prompt:
+  cluster_threshold: 1.0
+  num_prompt_points: 3
+  num_max_unoccupied: 300
+  min_points_for_clustering: 3
+  point_min_dist: 2
+  point_max_dist: 10
+  cam_offset: 0.6
+  min_num_prompt_points: 2
+  circle_radius: 18
