@@ -1,9 +1,11 @@
-import torch
-from PIL import Image
+import torchvision
 import faiss
 import numpy as np
 import torch.nn.functional as F
+import json
 
+from PIL import Image
+import torch
 
 class DynamicKnowledgeBase:
     def __init__(self, cfg, device="cuda"):
@@ -24,34 +26,44 @@ class DynamicKnowledgeBase:
             self.text_embedder = SentenceTransformer(cfg.text, device=device)
             self.image_model, self.preprocess = clip.load(cfg.visual, device=device)
 
-        # 初始化FAISS索引和文本图像嵌入器
-        # res = faiss.StandardGpuResources()  # GPU资源
-        # self.index = faiss.GpuIndexFlatL2(res, cfg.dim)  # FAISS GPU索引
-        
         self.index = faiss.IndexFlatL2(cfg.dim)
-
         self.data = []  # 存储文本和图像的信息
 
-    def add_text_data(self, text, device='cuda'):
-        # 对文本进行嵌入
-        embedding = self.text_embedder.encode([text], convert_to_numpy=True, device=device)
-        # 将文本嵌入向量添加到FAISS索引中
-        self.index.add(embedding.astype(np.float32))
-        self.data.append({'type': 'text', 'content': text})
+    def update_memory(self, text, image, topk, device="cuda"):
+        memories = self.search(text, image, topk, device)
 
-    def add_image_data(self, image_path, device='cuda'):
-        # 处理图像并获取图像的嵌入向量
-        image = Image.open(image_path)
-        image_input = self.preprocess(image).unsqueeze(0).to(device)  # 使用GPU处理图像
-        with torch.no_grad():
-            image_features = self.image_model.encode_image(image_input)
-        # 将图像嵌入向量添加到FAISS索引中
-        image_features = F.interpolate(image_features.unsqueeze(0), size=384, mode='linear', align_corners=False).squeeze(0)
-        image_features = image_features.cpu().numpy()
-        self.index.add(image_features.astype(np.float32))
-        self.data.append({'type': 'image', 'content': image_path})
+        # 得到当前观察的特征用于与历史观察计算相似度
+        image_inputs = self.preprocess(images=image, return_tensors="pt", padding=True, truncation=True).to(device)
+        current_obs = self.image_model.get_image_features(**image_inputs).cpu().detach().numpy()
+
+        for memory in memories:
+            history_obs = memory["image_vector"]
+            descript = memory["text"]
+
+            # 计算当前观察和历史观察的相似度
+            current_obs = F.normalize(torch.tensor(current_obs), p=2, dim=-1).numpy()
+            history_obs = F.normalize(torch.tensor(history_obs), p=2, dim=-1).numpy()
+            obs_similarity = np.dot(current_obs, history_obs.T)
+
+            objs = json.loads(descript.split("Objects: ")[-1])
+            for obj in objs:
+                cls = obj["cls"]
+                cap = obj["cap"]
+                pos = obj["pos"]
+
+            if obs_similarity > 0.8:
+                # 删除记忆索引
+                self.index.remove(memory["combined_vector"])
+                # 从数据中删除
+                self.data.remove(memory)
+                # 添加新的记忆
+                self.add_to_knowledge_base(text, image, device)
 
     def add_to_knowledge_base(self, text=None, image=None, device='cuda'):
+        # 更新记忆
+        self.update_memory(text, image, 5, device)
+
+        image_vector = text_vector = None
         if text:
             text_inputs = self.preprocess(text=text, return_tensors="pt", padding=True, truncation=True).to(device)
             text_vector = self.text_embedder.get_text_features(**text_inputs).cpu().detach().numpy()
@@ -59,7 +71,13 @@ class DynamicKnowledgeBase:
             image_inputs = self.preprocess(images=image, return_tensors="pt", padding=True, truncation=True).to(device)
             image_vector = self.image_model.get_image_features(**image_inputs).cpu().detach().numpy()
 
-        combined_vector = np.concatenate([image_vector, text_vector], axis=1)
+        if image is not None and text is not None:
+            combined_vector = np.concatenate([image_vector, text_vector], axis=1)
+        elif image is not None:
+            combined_vector = image_vector
+        else:
+            combined_vector = text_vector
+        
         # 添加到FAISS索引
         self.index.add(combined_vector)
         # 存储原始数据
@@ -70,19 +88,6 @@ class DynamicKnowledgeBase:
             "text_vector": text_vector,    # 文本向量
             "combined_vector": combined_vector  # 拼接后的向量
         })
-
-    # def search(self, query, top_k=5, device='cuda'):
-    #     # 对查询进行嵌入编码（文本或图像）
-    #     if isinstance(query, str):
-    #         query_embedding = self.text_embedder.encode([query], convert_to_numpy=True)
-    #     else:
-    #         query_input = self.preprocess(query).unsqueeze(0).to(device)  # 对图像进行处理
-    #         with torch.no_grad():
-    #             query_embedding = self.image_model.encode_image(query_input).cpu().numpy()
-
-    #     # 从FAISS索引中检索最相关的top_k项
-    #     D, I = self.index.search(query_embedding.astype(np.float32), top_k)
-    #     return [self.data[i] for i in I[0]]  # 返回检索到的文本或图像内容
 
     def search(self, query_text, image, top_k=5, device='cuda'):
         # 编码文本查询

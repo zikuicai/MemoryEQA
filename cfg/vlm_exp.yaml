@@ -1,12 +1,12 @@
 # General
 seed: 42
-exp_name: vlm_exp_sim
-output_parent_dir: results
-question_data_path: ./data/HM-EQA/questions.csv
-init_pose_data_path: ./data/scene_init_poses.csv
+exp_name: MT-HM3D
+output_parent_dir: results/explore-eqa
+question_data_path: ./data/MT-HM3D/MT-HM3D-filtered.csv
+init_pose_data_path: ./data/scene_init_poses_all.csv
 scene_data_path: ./data/HM3D
 save_obs: true
-save_freq: 10
+save_freq: 1
 
 # Question answering
 vlm:

@@ -13,7 +13,8 @@ args = parser.parse_args()
 cfg = OmegaConf.load(args.cfg_file)
 OmegaConf.resolve(cfg)
 
-vlm = VLM(cfg)
+vlm = VLM(cfg, cfg.device)
+
 
 # 创建Flask应用
 app = Flask(__name__)
@@ -39,7 +40,6 @@ def get_response():
 
     result = vlm.get_response(img, text, kb)
     return jsonify({"result": result}), 200
-
 
 if __name__ == '__main__':
     app.run(debug=True, host="0.0.0.0", port=5000, threaded=True)

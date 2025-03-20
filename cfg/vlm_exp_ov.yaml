@@ -1,31 +1,35 @@
 # General
 seed: 42
-exp_name: 3.2.qwen2vl_cliprag_allsteps
-output_parent_dir: results
+exp_name: HM-EQA
+output_parent_dir: results/full-memory
 question_data_path: ./data/HM-EQA/questions.csv
 init_pose_data_path: ./data/scene_init_poses.csv
-scene_data_path: ./data/HM3D
+scene_data_path: [./data/HM3D, ./data/ScanNet/V2/scans, ./data/ScanNet/V2/scans_trainval]
 save_obs: true
 save_freq: 20
 
 # Question answering
 vlm:
   device: 'cuda'
-  model_name_or_path: /home/zml/model/Qwen2-VL-72B-Instruct-GPTQ-Int4
+  model_name_or_path: /home/zml/model/Qwen2-VL-7B-Instruct
 
 rag:
   use_rag: true
   text: '/data/zml/models/openai/clip-vit-large-patch14'
   visual: '/data/zml/models/openai/clip-vit-large-patch14'
   dim: 1536
-  max_retrieval_num: 1
+  max_retrieval_num: 5
 
 prompt:
   caption: f"Describe this image."
   relevent: "\nConsider the question: '{}'. How confident are you in answering this question from your current perspective?\nA. Very low\nB. Low\nC. Medium\nD. High\nE. Very high\nAnswer with the option's letter from the given choices directly."
+  # relevent: "\nConsider the question: '{}'. Are you confident about answering the question with the current view? Answer with Yes or No."
   question: "{}\nAnswer with the option's letter from the given choices directly."
-  local_sem: "\nConsider the question: '{}', and you will explore the environment for answering it.\nWhich direction (black letters on the image) would you explore then? Answer with a single letter."
+  # question: "{}\nAnswer with the brief sentence."
+  local_sem: "\nConsider the question: '{}', and you will explore the environment for answering it.\nWhich direction (black letters on the image) would you explore then? Provide reasons and answer with a single letter."
   global_sem: "\nConsider the question: '{}', and you will explore the environment for answering it. Is there any direction shown in the image worth exploring? Answer with Yes or No."
+
+detector: '/home/zml/model/YOLO/yolo11x.pt'
 
 # Camera, image
 camera_height: 1.5

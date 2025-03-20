@@ -4,7 +4,12 @@ import math
 import io
 import requests
 import json
+import matplotlib.pyplot as plt
+import cv2
 from scipy.spatial.transform import Slerp, Rotation as R
+from PIL import Image
+from PIL import ImageDraw
+from PIL import ImageFont
 
 def interpolate_position_and_rotation(points, start_rot, end_rot, num_intermediate_points=10):
     # 初始化结果路径
@@ -132,3 +137,68 @@ def move_to_xy(pts, dst_pts, v=0.3):
         vy = -vy
 
     return vx, vy, duration
+
+
+def display_sample(rgb, depth, save_path="sample.png"):
+    # 创建一个包含3列的子图
+    fig, axes = plt.subplots(2, 1, figsize=(5, 8))
+
+    # 显示RGB图像
+    axes[0].imshow(rgb)
+    axes[0].set_title("RGB Image")
+    axes[0].axis('off')  # 关闭坐标轴
+
+    # 显示深度图像
+    axes[1].imshow(depth, cmap='jet')  # 使用 'jet' 配色方案
+    axes[1].set_title("Depth Image")
+    axes[1].axis('off')  # 关闭坐标轴
+
+    # 调整子图布局
+    plt.tight_layout()
+
+    # 保存图像为PNG文件
+    plt.savefig(save_path, format="png")
+
+    plt.close()
+
+
+def draw_letters(rgb_im, prompt_points_pix, letters, circle_radius, fnt, save_path):
+    rgb_im_draw = rgb_im.copy()
+    draw = ImageDraw.Draw(rgb_im_draw)
+    for prompt_point_ind, point_pix in enumerate(prompt_points_pix):
+        draw.ellipse(
+            (
+                point_pix[0] - circle_radius,
+                point_pix[1] - circle_radius,
+                point_pix[0] + circle_radius,
+                point_pix[1] + circle_radius,
+            ),
+            fill=(200, 200, 200, 255),
+            outline=(0, 0, 0, 255),
+            width=3,
+        )
+        draw.text(
+            tuple(point_pix.astype(int).tolist()),
+            letters[prompt_point_ind],
+            font=fnt,
+            fill=(0, 0, 0, 255),
+            anchor="mm",
+            font_size=12,
+        )
+    rgb_im_draw.save(save_path)
+    return rgb_im_draw
+
+
+def save_rgbd(rgb, depth, save_path="rgbd.png"):
+    depth_image = (depth.astype(np.float32) / depth.max()) * 255
+    depth_image = np.clip(depth_image, 0, 255).astype(np.uint8)
+    depth_image = cv2.cvtColor(depth_image, cv2.COLOR_GRAY2BGRA)
+
+    rgbd = np.concatenate((rgb, depth_image), axis=0)
+    plt.imsave(save_path, rgbd)
+
+def pixel2world(x, y, depth, pose):
+    pos = np.array([x, y, depth])
+    pos = np.dot(np.linalg.inv(pose[:3, :3]), pos - pose[:3, 3])
+    pos = np.dot(pose[:3, :3], pos) + pose[:3, 3]
+    return pos

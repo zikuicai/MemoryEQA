@@ -4,6 +4,7 @@ Run EQA in Habitat-Sim with VLM exploration.
 """
 
 import os
+import json
 
 os.environ["TRANSFORMERS_VERBOSITY"] = "error"  # disable warning
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -61,7 +62,7 @@ def display_sample(rgb, depth, save_path="sample.png"):
 
     plt.close()
 
-def main(cfg):
+def main(cfg, gpu_id, gpu_index, gpu_count):
     camera_tilt = cfg.camera_tilt_deg * np.pi / 180
     img_height = cfg.img_height
     img_width = cfg.img_width
@@ -87,19 +88,21 @@ def main(cfg):
     logging.info(f"Loaded {len(questions_data)} questions.")
 
     # Load VLM
-    vlm = VLM(cfg.vlm)
+
+    device = f"cuda:{gpu_id}"
+    vlm = VLM(cfg.vlm, device=device)
 
     results_all = []
-    # part_data = len(questions_data) / gpu_count
-    # start_idx = int(part_data * gpu_index)
-    # end_idx = int(part_data * (gpu_index + 1))
+    part_data = len(questions_data) / gpu_count
+    start_idx = int(part_data * gpu_index)
+    end_idx = int(part_data * (gpu_index + 1))
 
-    # logging.info(f"Loaded {start_idx} - {end_idx} questions.")
+    logging.info(f"Loaded {start_idx} - {end_idx} questions.")
 
     # Run all questions
     cnt_data = 0
     results_all = []
-    for question_ind in tqdm(range(len(questions_data))):
+    for question_ind in tqdm(range(start_idx, end_idx)):
 
         # Extract question
         question_data = questions_data[question_ind]
@@ -154,7 +157,7 @@ def main(cfg):
 
         agent = simulator.initialize_agent(sim_settings["default_agent"])
         agent_state = habitat_sim.AgentState()
-        pts = init_pts
+        pts = np.array(init_pts)
         angle = init_angle
 
         # Floor - use pts height as floor height
@@ -169,6 +172,19 @@ def main(cfg):
             f"Scene size: {scene_size} Floor height: {floor_height} Steps: {num_step}"
         )
 
+        result = {
+            "meta": {
+                "question_ind": question_ind,
+                "question": vlm_question,
+                "answer": answer,
+                "scene": scene,
+                "floor": floor,
+                "max_steps": num_step,
+            },
+            "step": [],
+            "summary": {},
+        }
+
         # Initialize TSDF
         tsdf_planner = TSDFPlanner(
             vol_bnds=tsdf_bnds,
@@ -180,11 +196,13 @@ def main(cfg):
 
         # Run steps
         pts_pixs = np.empty((0, 2))  # for plotting path on the image
+        max_step = 0
         for cnt_step in range(num_step):
             logging.info(f"\n== step: {cnt_step}")
 
             # Save step info and set current pose
             step_name = f"step_{cnt_step}"
+            max_step = cnt_step
             logging.info(f"Current pts: {pts}")
             # 第二步开始将位置转换为action
             # if cnt_step > 0:
@@ -290,7 +308,8 @@ def main(cfg):
             agent.set_state(agent_state)
 
             pts_normal = pos_habitat_to_normal(pts)
-            result[step_name] = {"pts": pts, "angle": angle}
+            # result[step_name] = {"pts": pts.tolist(), "angle": angle}
+            result["step"].append({"step": cnt_step, "pts": pts.tolist(), "angle": angle})
 
             # Update camera info
             sensor = agent.get_state().sensor_states["depth_sensor"]
@@ -337,7 +356,7 @@ def main(cfg):
                     margin_w=int(cfg.margin_w_ratio * img_width),
                 )
 
-                tsdf_planner.get_mesh(f"results/scenes/scene_{cnt_data}.ply")
+                # tsdf_planner.get_mesh(f"results/scenes/scene_{cnt_data}.ply")
 
                 # Get VLM prediction
                 rgb_im = Image.fromarray(rgb, mode="RGBA").convert("RGB")
@@ -451,12 +470,16 @@ def main(cfg):
                     )  # voxel locations already saved in tsdf class
 
                 # Save data
-                result[step_name]["smx_vlm_pred"] = smx_vlm_pred
-                result[step_name]["smx_vlm_rel"] = smx_vlm_rel
+                # result[step_name]["smx_vlm_pred"] = smx_vlm_pred.tolist()
+                # result[step_name]["smx_vlm_rel"] = smx_vlm_rel.tolist()
+                result["step"][cnt_step]["smx_vlm_pred"] = smx_vlm_pred.tolist()
+                result["step"][cnt_step]["smx_vlm_rel"] = smx_vlm_rel.tolist()
             else:
                 logging.info("Skipping black image!")
-                result[step_name]["smx_vlm_pred"] = np.ones((4)) / 4
-                result[step_name]["smx_vlm_rel"] = np.array([0.01, 0.99])
+                # result[step_name]["smx_vlm_pred"] = (np.ones((4)) / 4).tolist()
+                # result[step_name]["smx_vlm_rel"] = (np.array([0.01, 0.99])).tolist()
+                result["step"][cnt_step]["smx_vlm_pred"] = (np.ones((4)) / 4).tolist()
+                result["step"][cnt_step]["smx_vlm_rel"] = (np.array([0.01, 0.99])).tolist()
 
             # Determine next point
             if cnt_step < num_step:
@@ -494,20 +517,26 @@ def main(cfg):
         smx_vlm_all = np.empty((0, 4))
         relevancy_all = []
         candidates = ["A", "B", "C", "D"]
-        for step in range(num_step):
-            smx_vlm_pred = result[f"step_{step}"]["smx_vlm_pred"]
-            smx_vlm_rel = result[f"step_{step}"]["smx_vlm_rel"]
+        for step in range(max_step + 1):
+            # smx_vlm_pred = result[f"step_{step}"]["smx_vlm_pred"]
+            # smx_vlm_rel = result[f"step_{step}"]["smx_vlm_rel"]
+            smx_vlm_pred = result["step"][step]["smx_vlm_pred"]
+            smx_vlm_rel = result["step"][step]["smx_vlm_rel"]
             relevancy_all.append(smx_vlm_rel[0])
-            smx_vlm_all = np.vstack((smx_vlm_all, smx_vlm_rel[0] * smx_vlm_pred))
+            smx_vlm_all = np.vstack((smx_vlm_all, smx_vlm_rel[0] * np.array(smx_vlm_pred)))
         # Option 1: use the max of the weighted predictions
         smx_vlm_max = np.max(smx_vlm_all, axis=0)
         pred_token = candidates[np.argmax(smx_vlm_max)]
         success_weighted = pred_token == answer
+        # result["success_weighted"] = success_weighted
+        result["summary"]["success_weighted"] = success_weighted
         # Option 2: use the max of the relevancy
         max_relevancy = np.argmax(relevancy_all)
         relevancy_ord = np.flip(np.argsort(relevancy_all))
         pred_token = candidates[np.argmax(smx_vlm_all[max_relevancy])]
         success_max = pred_token == answer
+        # result["success_max"] = success_max
+        result["summary"]["success_max"] = success_max
 
         # Episode summary
         logging.info(f"\n== Episode Summary")
@@ -518,67 +547,47 @@ def main(cfg):
         logging.info(
             f"Top 3 steps with highest relevancy with value: {relevancy_ord[:3]} {[relevancy_all[i] for i in relevancy_ord[:3]]}"
         )
-        for rel_ind in range(3):
-            logging.info(f"Prediction: {smx_vlm_all[relevancy_ord[rel_ind]]}")
+        # for rel_ind in range(3):
+        #     logging.info(f"Prediction: {smx_vlm_all[relevancy_ord[rel_ind]]}")
 
         # Save data
         results_all.append(result)
+
         cnt_data += 1
         if cnt_data % cfg.save_freq == 0:
-            with open(
-                os.path.join(cfg.output_dir, f"results_{cnt_data}.pkl"), "wb"
-            ) as f:
-                pickle.dump(results_all, f)
+            with open(os.path.join(cfg.output_dir, f"results_{gpu_id}_{cnt_data}.json"), "w") as f:
+                json.dump(results_all, f, indent=4)
+        # if cnt_data % cfg.save_freq == 0:
+        #     with open(
+        #         os.path.join(cfg.output_dir, f"results_{cnt_data}.pkl"), "wb"
+        #     ) as f:
+        #         pickle.dump(results_all, f)
 
     # Save all data again
-    with open(os.path.join(cfg.output_dir, "results.pkl"), "wb") as f:
-        pickle.dump(results_all, f)
+    # with open(os.path.join(cfg.output_dir, "results.pkl"), "wb") as f:
+    #     pickle.dump(results_all, f)
+    with open(os.path.join(cfg.output_dir, "results.json"), "w") as f:
+        json.dump(results_all, f, indent=4)
     logging.info(f"\n== All Summary")
     logging.info(f"Number of data collected: {cnt_data}")
 
 
-if __name__ == "__main__":
-    import argparse
-    from omegaconf import OmegaConf
-
-    # get config path
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-cfg", "--cfg_file", help="cfg file path", default="", type=str)
-    args = parser.parse_args()
-    cfg = OmegaConf.load(args.cfg_file)
-    OmegaConf.resolve(cfg)
-
-    # Set up logging
-    cfg.output_dir = os.path.join(cfg.output_parent_dir, cfg.exp_name)
-    if not os.path.exists(cfg.output_dir):
-        os.makedirs(cfg.output_dir, exist_ok=True)  # recursive
-    logging_path = os.path.join(cfg.output_dir, "log.log")
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(message)s",
-        handlers=[
-            logging.FileHandler(logging_path, mode="w"),
-            logging.StreamHandler(),
-        ],
-    )
-
-    # run
-    logging.info(f"***** Running {cfg.exp_name} *****")
-    main(cfg)
-
-
-# def run_on_gpu(gpu_id, gpu_index, gpu_count, cfg_file):
+# if __name__ == "__main__":
+#     import argparse
 #     from omegaconf import OmegaConf
-#     """在指定 GPU 上运行 main(cfg)，并传递 GPU 信息"""
-#     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)  # 设置可见的 GPU
-#     cfg = OmegaConf.load(cfg_file)
+
+#     # get config path
+#     parser = argparse.ArgumentParser()
+#     parser.add_argument("-cfg", "--cfg_file", help="cfg file path", default="", type=str)
+#     args = parser.parse_args()
+#     cfg = OmegaConf.load(args.cfg_file)
 #     OmegaConf.resolve(cfg)
 
 #     # Set up logging
-#     cfg.output_dir = os.path.join(cfg.output_parent_dir, f"{cfg.exp_name}_gpu{gpu_id}")
+#     cfg.output_dir = os.path.join(cfg.output_parent_dir, cfg.exp_name)
 #     if not os.path.exists(cfg.output_dir):
 #         os.makedirs(cfg.output_dir, exist_ok=True)  # recursive
-#     logging_path = os.path.join(cfg.output_dir, f"log_{gpu_id}.log")
+#     logging_path = os.path.join(cfg.output_dir, "log.log")
 #     logging.basicConfig(
 #         level=logging.INFO,
 #         format="%(message)s",
@@ -588,38 +597,64 @@ if __name__ == "__main__":
 #         ],
 #     )
 
-#     # 将 GPU 信息传递给 main 函数
-#     logging.info(f"***** Running {cfg.exp_name} on GPU {gpu_id}/{gpu_count} *****")
-#     main(cfg, gpu_id, gpu_index, gpu_count)
+#     # run
+#     logging.info(f"***** Running {cfg.exp_name} *****")
+#     main(cfg)
 
 
-# if __name__ == "__main__":
-#     import argparse
-#     import os
-#     import logging
-#     from multiprocessing import Process, set_start_method
+def run_on_gpu(gpu_id, gpu_index, gpu_count, cfg_file):
+    from omegaconf import OmegaConf
+    """在指定 GPU 上运行 main(cfg)，并传递 GPU 信息"""
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)  # 设置可见的 GPU
+    cfg = OmegaConf.load(cfg_file)
+    OmegaConf.resolve(cfg)
 
-#     # 设置多进程启动方式为 spawn
-#     set_start_method("spawn", force=True)
+    # Set up logging
+    cfg.output_dir = os.path.join(cfg.output_parent_dir, f"{cfg.exp_name}/{cfg.exp_name}_gpu{gpu_id}")
+    if not os.path.exists(cfg.output_dir):
+        os.makedirs(cfg.output_dir, exist_ok=True)  # recursive
+    logging_path = os.path.join(cfg.output_dir, f"log_{gpu_id}.log")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(message)s",
+        handlers=[
+            logging.FileHandler(logging_path, mode="w"),
+            logging.StreamHandler(),
+        ],
+    )
 
-#     # Parse arguments
-#     parser = argparse.ArgumentParser()
-#     parser.add_argument("-cfg", "--cfg_file", help="cfg file path", default="cfg/vlm_exp_ov.yaml", type=str)
-#     parser.add_argument("-gpus", "--gpu_ids", help="Comma-separated GPU IDs to use (e.g., '0,1,2')", type=str, default="0")
-#     args = parser.parse_args()
+    # 将 GPU 信息传递给 main 函数
+    logging.info(f"***** Running {cfg.exp_name} on GPU {gpu_id}/{gpu_count} *****")
+    main(cfg, gpu_id, gpu_index, gpu_count)
 
-#     # Get list of GPUs
-#     gpu_ids = [int(gpu_id) for gpu_id in args.gpu_ids.split(",")]
-#     gpu_count = len(gpu_ids)  # 计算 GPU 数量
 
-#     # Launch processes for each GPU
-#     processes = []
-#     for gpu_id in gpu_ids:
-#         gpu_index = gpu_ids.index(gpu_id)
-#         p = Process(target=run_on_gpu, args=(gpu_id, gpu_index, gpu_count, args.cfg_file))
-#         p.start()
-#         processes.append(p)
+if __name__ == "__main__":
+    import argparse
+    import os
+    import logging
+    from multiprocessing import Process, set_start_method
 
-#     # Wait for all processes to finish
-#     for p in processes:
-#         p.join()
+    # 设置多进程启动方式为 spawn
+    set_start_method("spawn", force=True)
+
+    # Parse arguments
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-cfg", "--cfg_file", help="cfg file path", default="cfg/vlm_exp_ov.yaml", type=str)
+    parser.add_argument("-gpus", "--gpu_ids", help="Comma-separated GPU IDs to use (e.g., '0,1,2')", type=str, default="0")
+    args = parser.parse_args()
+
+    # Get list of GPUs
+    gpu_ids = [int(gpu_id) for gpu_id in args.gpu_ids.split(",")]
+    gpu_count = len(gpu_ids)  # 计算 GPU 数量
+
+    # Launch processes for each GPU
+    processes = []
+    for gpu_id in gpu_ids:
+        gpu_index = gpu_ids.index(gpu_id)
+        p = Process(target=run_on_gpu, args=(gpu_id, gpu_index, gpu_count, args.cfg_file))
+        p.start()
+        processes.append(p)
+
+    # Wait for all processes to finish
+    for p in processes:
+        p.join()

@@ -107,13 +107,15 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
 
     cam_intr = get_cam_intr(cfg.hfov, img_height, img_width)
 
+    logging.info(cfg)
+
     prompt = cfg.prompt
     prompt_caption = prompt.caption
     prompt_rel = prompt.relevent
     prompt_question = prompt.question
     prompt_lsv = prompt.local_sem
     prompt_gsv = prompt.global_sem
-    
+
     # Load dataset
     with open(cfg.question_data_path) as f:
         questions_data = [
@@ -162,17 +164,25 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
         floor = question_data["floor"]
         scene_floor = scene + "_" + floor
         question = question_data["question"]
-        choices = [c.split("'")[1] for c in question_data["choices"].split("',")]
+        # choices = [c.split("'")[1] for c in question_data["choices"].split("',")]
+        choices = [c.strip("'\"") for c in question_data["choices"].strip("[]").split(", ")]
         answer = question_data["answer"]
+
         init_pts = init_pose_data[scene_floor]["init_pts"]
         init_angle = init_pose_data[scene_floor]["init_angle"]
+        
         logging.info(f"\n========\nIndex: {question_ind} Scene: {scene} Floor: {floor}")
 
         # Re-format the question to follow LLaMA style
         vlm_question = question
         vlm_pred_candidates = ["A", "B", "C", "D"]
-        for token, choice in zip(vlm_pred_candidates, choices):
-            vlm_question += "\n" + token + ". " + choice
+        # open or close vocab
+        is_open_vocab = True
+        if is_open_vocab:
+            answer = choices[vlm_pred_candidates.index(answer)]
+        else:
+            for token, choice in zip(vlm_pred_candidates, choices):
+                vlm_question += "\n" + token + ". " + choice
         logging.info(f"Question:\n{vlm_question}\nAnswer: {answer}")
 
         # Set data dir for this question - set initial data to be saved
@@ -184,11 +194,16 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
             simulator.close()
         except:
             pass
+        scene_data_path = ""
+        for scene_path in cfg.scene_data_path:
+            if os.path.exists(os.path.join(scene_path, scene)):
+                scene_data_path = scene_path
+                break
         scene_mesh_dir = os.path.join(
-            cfg.scene_data_path, scene, scene[6:] + ".basis" + ".glb"
+            scene_data_path, scene, scene[6:] + ".basis" + ".glb"
         )
         navmesh_file = os.path.join(
-            cfg.scene_data_path, scene, scene[6:] + ".basis" + ".navmesh"
+            scene_data_path, scene, scene[6:] + ".basis" + ".navmesh"
         )
         sim_settings = {
             "scene": scene_mesh_dir,
@@ -308,7 +323,7 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
                     margin_w=int(cfg.margin_w_ratio * img_width),
                 )
 
-                tsdf_planner.get_mesh(f"results/scenes/scene_{question_ind}.ply")
+                # tsdf_planner.get_mesh(f"results/scenes/scene_{question_ind}.ply")
 
                 # 模型判断是否有信心回答当前问题
                 if rag_cfg.use_rag:
@@ -329,12 +344,12 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
                 logging.info(f"Pred - Prob: {smx_vlm_pred}")
 
                 # save data
-                result["step"][cnt_step]["smx_vlm_rel"] = smx_vlm_rel
-                result["step"][cnt_step]["smx_vlm_pred"] = smx_vlm_pred
-                result["step"][cnt_step]["is_success"] = smx_vlm_pred == answer
+                result["step"][cnt_step]["smx_vlm_rel"] = smx_vlm_rel[0]
+                result["step"][cnt_step]["smx_vlm_pred"] = smx_vlm_pred[0]
+                result["step"][cnt_step]["is_success"] = smx_vlm_pred[0] == answer
 
                 # 如果有信心回答，则直接获取答案
-                if smx_vlm_rel in ["C", "D", "E"]:
+                if smx_vlm_rel.lower() in ["c", "d", "e", "yes"]:
                     break
 
                 # Get frontier candidates
@@ -381,7 +396,7 @@ def main(cfg, gpu_id, gpu_index, gpu_count):
                         lsv = (
                             np.ones(actual_num_prompt_points) / actual_num_prompt_points
                         )
-                    
+
                     # base - use image without label
                     if cfg.use_gsv:
                         if rag_cfg.use_rag:

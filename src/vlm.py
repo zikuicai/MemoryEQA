@@ -6,6 +6,7 @@ import numpy as np
 from prismatic import load
 from transformers import Qwen2VLForConditionalGeneration, AutoTokenizer, AutoProcessor
 from qwen_vl_utils import process_vision_info
+from src.request_api import RequestAPI
 
 class VLM:
     def __init__(self, cfg, device="cuda"):
@@ -16,8 +17,7 @@ class VLM:
         self.processor = None
         logging.info(f"Loading VLM model {model_id}")
         if model_id == "prism-dinosiglip+7b":
-            self.model = load(cfg.model_name_or_path)
-            self.model.to('cuda', dtype=torch.bfloat16)
+            self.model = load(cfg.model_name_or_path).to(device, dtype=torch.bfloat16)
 
         elif model_id in ["Qwen2-VL-2B-Instruct", "Qwen2-VL-72B-Instruct", "Qwen2-VL-7B-Instruct", "Qwen2-VL-72B-Instruct-GPTQ-Int4", "Qwen2-VL-72B-Instruct-GPTQ-Int8"]:
             self.model = Qwen2VLForConditionalGeneration.from_pretrained(
@@ -27,6 +27,10 @@ class VLM:
                 device_map=device,
             )
             self.processor = AutoProcessor.from_pretrained(cfg.model_name_or_path)
+
+        elif model_id in ["GPT-4o"]:
+            self.model = RequestAPI()
+            
         else:
             raise ValueError(f"Unknown model_id: {model_id}")
 
@@ -47,6 +51,14 @@ class VLM:
         return generated_text
 
     def get_response(self, image=None, prompt=None, kb=None, device="cuda"):
+        if isinstance(self.model, RequestAPI):
+            return self.get_response_api(image, prompt, kb)
+        return self.get_response_local(image, prompt, kb, device)
+
+    def get_response_api(self, image, prompt, kb):
+        return self.model.request_with_retry(image, prompt, kb)
+
+    def get_response_local(self, image=None, prompt=None, kb=None, device="cuda"):
         # 创建对话信息
         message = {
                 "role": "user",
@@ -63,18 +75,6 @@ class VLM:
                     "type": "text",
                     "text": item['text'],
                 })
-            # if item['type'] == 'image':
-            #     message["content"].append({
-            #         "type": "image",
-            #         "image": item['content'],
-            #     })
-            # else:
-            #     # context.append(item['content'])
-            #     message["content"].append({
-            #         "type": "text",
-            #         "text": item['content'],
-            #     })
-
 
         # 添加图像和提示信息
         if image is not None:
@@ -87,16 +87,13 @@ class VLM:
                 "type": "text",
                 "text": prompt,
             })
-        # if len(context) > 0:
-        #     message["content"].append({
-        #         "type": "text",
-        #         "text": " ".join(context),
-        #     })
         messages = [message]
+
         # Preparation for inference
         text = self.processor.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
         )
+        
         image_inputs, video_inputs = process_vision_info(messages)
         inputs = self.processor(
             text=[text],
@@ -131,3 +128,5 @@ class VLM:
         if get_smx:
             return np.exp(-losses / T) / np.sum(np.exp(-losses / T))
         return losses
+
+

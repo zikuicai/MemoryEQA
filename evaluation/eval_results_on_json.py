@@ -1,5 +1,6 @@
 import os
 import json
+import numpy as np
 
 # {
 #     "meta": {
@@ -42,16 +43,28 @@ def load_jsons(files_path):
 def evaluate(files_path):
     samples = load_jsons(files_path)
     results = []
+    choices = ['a', 'b', 'c', 'd']
     for data in samples:
         result = {}
 
         meta_data = data['meta']
         step_data = data['step']
         max_step = meta_data['max_steps']
+        answer = meta_data['answer']
 
         for step in step_data:
             step_num = step['step'] + 1
-            is_success = step['is_success']
+            res = step['smx_vlm_pred']
+            if isinstance(res, str):
+                res = step['smx_vlm_pred'].split('. ')[0]
+                if step['smx_vlm_pred'].split('. ')[0].lower() == "y":
+                    res = "yes"
+                elif step['smx_vlm_pred'].split('. ')[0].lower() == "n":
+                    res = "no"
+            elif isinstance(res, list):
+                index = np.array(np.argmax(res))
+                res = choices[index]
+            is_success = answer.lower() == res
             if is_success and "norm_early_success_step" not in result.keys():
                 result["norm_early_success_step"] = step_num / max_step
             result["norm_success_step"] = step_num / max_step
@@ -80,15 +93,13 @@ def evaluate(files_path):
         print(f"平均归一化提早成功步数为{norm_early_steps/early_count:.2}。")
 
 if __name__ == '__main__':
-    # 示例用法
     files_path = [
-        'results/7.2.qwen2vl_bliprag_allsteps/7.2.qwen2vl_bliprag_allsteps_gpu0/results.json',
-        'results/7.2.qwen2vl_bliprag_allsteps/7.2.qwen2vl_bliprag_allsteps_gpu1/results.json',
-        'results/7.2.qwen2vl_bliprag_allsteps/7.2.qwen2vl_bliprag_allsteps_gpu2/results.json',
-        'results/7.2.qwen2vl_bliprag_allsteps/7.2.qwen2vl_bliprag_allsteps_gpu3/results.json',
-        'results/7.2.qwen2vl_bliprag_allsteps/7.2.qwen2vl_bliprag_allsteps_gpu4/results.json',
-        'results/7.2.qwen2vl_bliprag_allsteps/7.2.qwen2vl_bliprag_allsteps_gpu5/results.json',
-        'results/7.2.qwen2vl_bliprag_allsteps/7.2.qwen2vl_bliprag_allsteps_gpu6/results.json',
-        'results/7.2.qwen2vl_bliprag_allsteps/7.2.qwen2vl_bliprag_allsteps_gpu7/results.json',
+        'results/diff-mt/Qwen2-VL-7B-Instruct1/Qwen2-VL-7B-Instruct1_gpu0/results.json',
+        'results/diff-mt/Qwen2-VL-7B-Instruct1/Qwen2-VL-7B-Instruct1_gpu1/results.json',
+        'results/diff-mt/Qwen2-VL-7B-Instruct1/Qwen2-VL-7B-Instruct1_gpu2/results.json',
+        'results/diff-mt/Qwen2-VL-7B-Instruct1/Qwen2-VL-7B-Instruct1_gpu3/results.json',
+        'results/diff-mt/Qwen2-VL-7B-Instruct1/Qwen2-VL-7B-Instruct1_gpu4/results.json',
+        'results/diff-mt/Qwen2-VL-7B-Instruct1/Qwen2-VL-7B-Instruct1_gpu5/results.json',
+        'results/diff-mt/Qwen2-VL-7B-Instruct1/Qwen2-VL-7B-Instruct1_gpu6/results.json',
     ]
     evaluate(files_path)
