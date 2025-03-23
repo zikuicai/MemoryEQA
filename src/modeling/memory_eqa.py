@@ -278,6 +278,9 @@ class MemoryEQA():
             depth = obs["depth_sensor"]
 
             rgb_im = Image.fromarray(rgb, mode="RGBA").convert("RGB")
+
+            room = self.vlm.get_response(rgb_im, "What room are you most likely to be in at the moment? Answer with a phrase", [], device=self.device)
+
             objects = self.detector(rgb_im)[0]
             objs_info = []
             for box in objects.boxes:
@@ -292,7 +295,7 @@ class MemoryEQA():
                 world_pos = pixel2world(x, y, depth[int(y), int(x)], cam_pose)
                 world_pos = pos_normal_to_habitat(world_pos)
                 # 保存目标信息
-                objs_info.append({"cls": cls ,"caption": obj_caption[0], "pos": world_pos.tolist()})
+                objs_info.append({"room": room, "cls": cls ,"caption": obj_caption[0], "pos": world_pos.tolist()})
 
             if self.cfg.rag.use_rag:
                 caption = self.vlm.get_response(rgb_im, self.prompt_caption, [], device=self.device)
@@ -323,7 +326,7 @@ class MemoryEQA():
 
                 # 模型判断是否有信心回答当前问题
                 if self.cfg.rag.use_rag:
-                    kb = self.knowledge_base.search(self.prompt_rel.format(question), 
+                    kb, _ = self.knowledge_base.search(self.prompt_rel.format(question), 
                                                rgb_im, 
                                                top_k=self.cfg.rag.max_retrieval_num if cnt_step > self.cfg.rag.max_retrieval_num else cnt_step,
                                                device=self.device)
@@ -332,7 +335,7 @@ class MemoryEQA():
 
                 logging.info(f"Prompt Pred: {self.prompt_question.format(vlm_question)}")
                 if self.cfg.rag.use_rag:
-                    kb = self.knowledge_base.search(self.prompt_question.format(vlm_question), 
+                    kb, _ = self.knowledge_base.search(self.prompt_question.format(vlm_question), 
                                                rgb_im, 
                                                top_k=self.cfg.rag.max_retrieval_num if cnt_step > self.cfg.rag.max_retrieval_num else cnt_step,
                                                device=self.device)
@@ -378,7 +381,7 @@ class MemoryEQA():
                     # get VLM reasoning for exploring
                     if self.cfg.use_lsv:
                         if self.cfg.rag.use_rag:
-                            kb = self.knowledge_base.search(self.prompt_lsv.format(question), 
+                            kb, _ = self.knowledge_base.search(self.prompt_lsv.format(question), 
                                                        rgb_im, 
                                                        top_k=self.cfg.rag.max_retrieval_num if cnt_step > self.cfg.rag.max_retrieval_num else cnt_step,
                                                        device=self.device)
@@ -396,7 +399,7 @@ class MemoryEQA():
                     # base - use image without label
                     if self.cfg.use_gsv:
                         if self.cfg.rag.use_rag:
-                            kb = self.knowledge_base.search(self.prompt_gsv.format(question), 
+                            kb, _ = self.knowledge_base.search(self.prompt_gsv.format(question), 
                                                        rgb_im, 
                                                        top_k=self.cfg.rag.max_retrieval_num if cnt_step > self.cfg.rag.max_retrieval_num else cnt_step,
                                                        device=self.device)
@@ -454,7 +457,7 @@ class MemoryEQA():
         if cnt_step == num_step - 1:
             logging.info("Max step reached!")
             if self.cfg.rag.use_rag:
-                kb = self.knowledge_base.search(self.prompt_question.format(vlm_question), 
+                kb, _ = self.knowledge_base.search(self.prompt_question.format(vlm_question), 
                                            rgb_im, 
                                            top_k=self.cfg.rag.max_retrieval_num if cnt_step > self.cfg.rag.max_retrieval_num else cnt_step,
                                            device=self.device)

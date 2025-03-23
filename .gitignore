@@ -5,3 +5,4 @@ results/
 __pychache__/
 *.egg-info/
 vlm/
+prismatic-vlms/

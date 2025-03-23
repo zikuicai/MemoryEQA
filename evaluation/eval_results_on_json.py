@@ -94,12 +94,8 @@ def evaluate(files_path):
 
 if __name__ == '__main__':
     files_path = [
-        'results/diff-mt/Qwen2-VL-7B-Instruct1/Qwen2-VL-7B-Instruct1_gpu0/results.json',
-        'results/diff-mt/Qwen2-VL-7B-Instruct1/Qwen2-VL-7B-Instruct1_gpu1/results.json',
-        'results/diff-mt/Qwen2-VL-7B-Instruct1/Qwen2-VL-7B-Instruct1_gpu2/results.json',
-        'results/diff-mt/Qwen2-VL-7B-Instruct1/Qwen2-VL-7B-Instruct1_gpu3/results.json',
-        'results/diff-mt/Qwen2-VL-7B-Instruct1/Qwen2-VL-7B-Instruct1_gpu4/results.json',
-        'results/diff-mt/Qwen2-VL-7B-Instruct1/Qwen2-VL-7B-Instruct1_gpu5/results.json',
-        'results/diff-mt/Qwen2-VL-7B-Instruct1/Qwen2-VL-7B-Instruct1_gpu6/results.json',
+        'results/full-memory/HM-EQA/HM-EQA_gpu0/results.json',
+        "results/full-memory/HM-EQA/HM-EQA_gpu3/results-480.json",
+        "results/full-memory/HM-EQA/HM-EQA_gpu2/results-360.json"
     ]
     evaluate(files_path)
