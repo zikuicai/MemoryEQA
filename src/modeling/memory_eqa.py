@@ -168,7 +168,7 @@ class MemoryEQA():
         vlm_pred_candidates = ["A", "B", "C", "D"]
 
         # open or close vocab
-        is_open_vocab = True
+        is_open_vocab = False
         if is_open_vocab:
             answer = choices[vlm_pred_candidates.index(answer)]
         else:

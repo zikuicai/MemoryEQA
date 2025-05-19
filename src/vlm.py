@@ -3,7 +3,6 @@ import logging
 import torch
 import numpy as np
 
-from prismatic import load
 from transformers import Qwen2VLForConditionalGeneration, AutoTokenizer, AutoProcessor
 from qwen_vl_utils import process_vision_info
 from src.request_api import RequestAPI
@@ -16,10 +15,8 @@ class VLM:
         self.model = None
         self.processor = None
         logging.info(f"Loading VLM model {model_id}")
-        if model_id == "prism-dinosiglip+7b":
-            self.model = load(cfg.model_name_or_path).to(device, dtype=torch.bfloat16)
 
-        elif model_id in ["Qwen2-VL-2B-Instruct", "Qwen2-VL-72B-Instruct", "Qwen2-VL-7B-Instruct", "Qwen2-VL-72B-Instruct-GPTQ-Int4", "Qwen2-VL-72B-Instruct-GPTQ-Int8"]:
+        if model_id in ["Qwen2-VL-2B-Instruct", "Qwen2-VL-72B-Instruct", "Qwen2-VL-7B-Instruct", "Qwen2-VL-72B-Instruct-GPTQ-Int4", "Qwen2-VL-72B-Instruct-GPTQ-Int8"]:
             self.model = Qwen2VLForConditionalGeneration.from_pretrained(
                 cfg.model_name_or_path,
                 torch_dtype="auto",

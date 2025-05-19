@@ -4,30 +4,43 @@ import habitat_sim
 
 def pos_normal_to_habitat(pts):
     # +90 deg around x-axis
-    return np.dot(pts, np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]]))
+    return np.dot(pts, np.array([[1, 0,  0], 
+                                 [0, 0, -1], 
+                                 [0, 1,  0]]))
 
 
 def pos_habitat_to_normal(pts):
     # -90 deg around x-axis
-    return np.dot(pts, np.array([[1, 0, 0], [0, 0, 1], [0, -1, 0]]))
+    return np.dot(pts, np.array([[1,  0, 0], 
+                                 [0,  0, 1], 
+                                 [0, -1, 0]]))
 
 
 def pose_habitat_to_normal(pose):
     # T_normal_cam = T_normal_habitat * T_habitat_cam
     return np.dot(
-        np.array([[1, 0, 0, 0], [0, 0, -1, 0], [0, 1, 0, 0], [0, 0, 0, 1]]), pose
+        np.array([[1, 0,  0, 0], 
+                  [0, 0, -1, 0], 
+                  [0, 1,  0, 0], 
+                  [0, 0,  0, 1]]), pose
     )
 
 
 def pose_normal_to_tsdf(pose):
     return np.dot(
-        pose, np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
+        pose, np.array([[1,  0,  0, 0], 
+                        [0, -1,  0, 0], 
+                        [0,  0, -1, 0], 
+                        [0,  0,  0, 1]])
     )
 
 
 def pose_normal_to_tsdf_real(pose):
     # This one makes sense, which is making x-forward, y-left, z-up to z-forward, x-right, y-down
-    return pose @ np.array([[0, 0, 1, 0], [-1, 0, 0, 0], [0, -1, 0, 0], [0, 0, 0, 1]])
+    return pose @ np.array([[ 0,  0, 1, 0], 
+                            [-1,  0, 0, 0], 
+                            [ 0, -1, 0, 0], 
+                            [ 0,  0, 0, 1]])
 
 
 def make_simple_cfg(settings):
