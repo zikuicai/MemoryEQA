@@ -49,7 +49,7 @@ pip install -vvv --no-build-isolation -e .
 ```
 
 # Dataset
-<img src="asset/data.png" alt="data" width="50%" />
+<img src="assets/data.png" alt="data" width="50%" />
 
 - Huggingface: [link](https://huggingface.co/datasets/zmling/MT-HM3D)
 - Baidu Cloud: coming soon
