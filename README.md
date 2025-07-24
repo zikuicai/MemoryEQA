@@ -28,7 +28,8 @@ conda install habitat-sim headless -c conda-forge -c aihabitat
 
 Install [flash-attention2](https://github.com/Dao-AILab/flash-attention):
 ```
-pip install flash-attn --no-build-isolation
+# pip install flash-attn --no-build-isolation
+pip install flash-attn==2.6.3 --no-deps --no-build-isolation
 ```
 
 Install [faiss-gpu](https://github.com/facebookresearch/faiss)
