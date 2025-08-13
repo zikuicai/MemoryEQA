@@ -1,4 +1,4 @@
-name: memory-eqa1
+name: memory-eqa
 channels:
   - hcc
   - conda-forge
